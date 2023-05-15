@@ -21,7 +21,7 @@
 #include "transport.h"
 
 
-enum { CSTATE_ESTABLISHED };    /* you should have more states */
+enum { CSTATE_ESTABLISHED,CSTATE_CLOSED,CSTATE_LISTEN,CSTATE_CONNECT,CSTATE_ACCEPT,CSTATE_CLOSEWAIT,CSTATE_LASTCALL,CSTATE_FINWAIT1,CSTATE_FINWAIT2 };    /* you should have more states */
 
 
 /* this structure is global to a mysocket descriptor */
