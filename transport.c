@@ -16,6 +16,7 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <arpa/inet.h>
+#include <cstring>
 #include "mysock.h"
 #include "stcp_api.h"
 #include "transport.h"
