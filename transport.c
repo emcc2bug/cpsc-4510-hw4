@@ -19,7 +19,50 @@
 #include "mysock.h"
 #include "stcp_api.h"
 #include "transport.h"
+struct cBuffer{
+    int start=0;
+    int end=0;
+    char buffer[MAXBUF];
+};
 
+int slideWindow(cBuffer* in, int amount){
+    if(amount>getSize(in)){
+        return -1;
+    }
+    in->start+=amount;
+    in->start%MAXBUF;
+    return 1;
+}
+
+int getSize(cBuffer* in){
+    return (in->end-in->start+MAXBUF)%MAXBUF;
+}
+
+char* getWindow(cBuffer* in){
+    int size=getSize(in);
+    char* out=new char[size];
+    if(size!=0){
+        out[size-1]=0;
+    }
+    for(int i = 0;i<size;i++){
+        out[i]=in->buffer[(in->start+i)%MAXBUF];
+    }
+    return out;
+}
+
+int insertWindow(cBuffer* in, char* inString){
+    int totalAdded=0;
+    for(int i = 0;i<strlen(inString);i++){
+        if(getSize(in)+1>=MAXBUF){
+            break;
+        }
+        in->buffer[(in->end)%MAXBUF]=inString[i];
+        in->buffer[(in->end+1)%MAXBUF]=0;
+        totalAdded++;
+        in->end++;
+    }
+    return totalAdded;
+}
 
 enum { CSTATE_ESTABLISHED,CSTATE_CLOSED,CSTATE_LISTEN,CSTATE_CONNECT,CSTATE_ACCEPT,CSTATE_CLOSEWAIT,CSTATE_LASTCALL,CSTATE_FINWAIT1,CSTATE_FINWAIT2 };    /* you should have more states */
 
