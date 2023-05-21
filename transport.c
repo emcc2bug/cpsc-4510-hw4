@@ -20,6 +20,7 @@
 #include "mysock.h"
 #include "stcp_api.h"
 #include "transport.h"
+#define MAXBUF 3072
 
 struct cBuffer{
     int start=0;
@@ -27,17 +28,17 @@ struct cBuffer{
     char buffer[MAXBUF];
 };
 
+int getSize(cBuffer* in){
+    return (in->end-in->start+MAXBUF)%MAXBUF;
+}
+
 int slideWindow(cBuffer* in, int amount){
     if(amount>getSize(in)){
         return -1;
     }
     in->start+=amount;
-    in->start%MAXBUF;
+    in->start=in->start%MAXBUF;
     return 1;
-}
-
-int getSize(cBuffer* in){
-    return (in->end-in->start+MAXBUF)%MAXBUF;
 }
 
 char* getWindow(cBuffer* in){
@@ -54,7 +55,7 @@ char* getWindow(cBuffer* in){
 
 int insertWindow(cBuffer* in, char* inString){
     int totalAdded=0;
-    for(int i = 0;i<strlen(inString);i++){
+    for(size_t i = 0;i<strlen(inString);i++){
         if(getSize(in)+1>=MAXBUF){
             break;
         }
@@ -64,6 +65,30 @@ int insertWindow(cBuffer* in, char* inString){
         in->end++;
     }
     return totalAdded;
+}
+
+int calcCheckSum(tcphdr input){
+    int size=sizeof(tcphdr);
+    char * interpretBuffer=(char*)malloc(size);
+    memcpy(interpretBuffer,(const void*)&input,size);
+    int intermediary=0;
+    int total=0;
+    for(int i=0;i<size;i++){
+        intermediary=0;
+        intermediary=intermediary&interpretBuffer[i];
+        total=total+intermediary;
+    }
+    return total;
+}
+
+bool checkCheckSum(tcphdr input){
+    int sum=input.th_sum;
+    input.th_sum=0;
+    if(calcCheckSum(input)==sum){
+        return true;
+    } else {
+        return false;
+    }
 }
 
 enum { CSTATE_ESTABLISHED,CSTATE_CLOSED,CSTATE_LISTEN,CSTATE_CONNECT,CSTATE_ACCEPT,CSTATE_CLOSEWAIT,CSTATE_LASTCALL,CSTATE_FINWAIT1,CSTATE_FINWAIT2 };    /* you should have more states */
@@ -97,7 +122,30 @@ void transport_init(mysocket_t sd, bool_t is_active)
     assert(ctx);
 
     generate_initial_seq_num(ctx);
+    
+    if(is_active){
+        tcphdr sync_head;
+        sync_head.th_seq=htonl(ctx->initial_sequence_num);
+        sync_head.th_flags=TH_SYN;
+        sync_head.th_win=MAXBUF;
+        sync_head.th_sum=calcCheckSum(sync_head);
+        stcp_network_send(sd,&sync_head,sizeof(tcphdr),NULL);
 
+        tcphdr recv_head;
+        stcp_network_recv(sd,&recv_head,sizeof(tcphdr));
+        if(!checkCheckSum(recv_head)){
+            return;
+        } 
+        if(recv_head.flags!=TH_SYN&TH_ACK){
+            return;
+        }
+
+
+        ctx->current_window=recv_head.th_win;
+
+    } else {
+
+    }
     /* XXX: you should send a SYN packet here if is_active, or wait for one
      * to arrive if !is_active.  after the handshake completes, unblock the
      * application with stcp_unblock_application(sd).  you may also use
