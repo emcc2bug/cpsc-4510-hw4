@@ -20,7 +20,9 @@
 #include "mysock.h"
 #include "stcp_api.h"
 #include "transport.h"
-#define MAXBUF 3072
+
+#include <map>
+#include <functional>
 
 struct cBuffer{
     int start=0;
@@ -28,17 +30,17 @@ struct cBuffer{
     char buffer[MAXBUF];
 };
 
-int getSize(cBuffer* in){
-    return (in->end-in->start+MAXBUF)%MAXBUF;
-}
-
 int slideWindow(cBuffer* in, int amount){
     if(amount>getSize(in)){
         return -1;
     }
     in->start+=amount;
-    in->start=in->start%MAXBUF;
+    in->start%MAXBUF;
     return 1;
+}
+
+int getSize(cBuffer* in){
+    return (in->end-in->start+MAXBUF)%MAXBUF;
 }
 
 char* getWindow(cBuffer* in){
@@ -55,7 +57,7 @@ char* getWindow(cBuffer* in){
 
 int insertWindow(cBuffer* in, char* inString){
     int totalAdded=0;
-    for(size_t i = 0;i<strlen(inString);i++){
+    for(int i = 0;i<strlen(inString);i++){
         if(getSize(in)+1>=MAXBUF){
             break;
         }
@@ -67,44 +69,42 @@ int insertWindow(cBuffer* in, char* inString){
     return totalAdded;
 }
 
-int calcCheckSum(tcphdr input){
-    int size=sizeof(tcphdr);
-    char * interpretBuffer=(char*)malloc(size);
-    memcpy(interpretBuffer,(const void*)&input,size);
-    int intermediary=0;
-    int total=0;
-    for(int i=0;i<size;i++){
-        intermediary=0;
-        intermediary=intermediary&interpretBuffer[i];
-        total=total+intermediary;
-    }
-    return total;
-}
+typedef enum State {
 
-bool checkCheckSum(tcphdr input){
-    int sum=input.th_sum;
-    input.th_sum=0;
-    if(calcCheckSum(input)==sum){
-        return true;
-    } else {
-        return false;
-    }
-}
+    LISTEN,
+    CLOSED,  
 
-enum { CSTATE_ESTABLISHED,CSTATE_CLOSED,CSTATE_LISTEN,CSTATE_CONNECT,CSTATE_ACCEPT,CSTATE_CLOSEWAIT,CSTATE_LASTCALL,CSTATE_FINWAIT1,CSTATE_FINWAIT2 };    /* you should have more states */
+    CONNECT, 
+    ACCEPT, 
 
+    PASSIVE_ESTABLISHED, 
+    ACTIVE_ESTABLISHED,
+
+    FIN_WAIT_1,
+    FIN_WAIT_2,
+    CLOSE_WAIT,
+    LAST_CALL,
+
+    ERROR,
+} State;
 
 /* this structure is global to a mysocket descriptor */
 typedef struct
 {
     bool_t done;    /* TRUE once connection is closed */
 
-    int connection_state;   /* state of the connection (established, etc.) */
+    State state;   /* state of the connection (established, etc.) */
     tcp_seq initial_sequence_num;
 
     /* any other connection-wide global variables go here */
 } context_t;
 
+static void send_syn(mysocket_t sd, context_t *ctx);
+static void recv_syn_send_synack(mysocket_t sd, context_t *ctx);
+static void recv_synack_send_ack(mysocket_t sd, context_t *ctx);
+static void recv_ack(mysocket_t sd, context_t *ctx);
+
+static State execute_state(context_t *ctx, int event);
 
 static void generate_initial_seq_num(context_t *ctx);
 static void control_loop(mysocket_t sd, context_t *ctx);
@@ -122,30 +122,7 @@ void transport_init(mysocket_t sd, bool_t is_active)
     assert(ctx);
 
     generate_initial_seq_num(ctx);
-    
-    if(is_active){
-        tcphdr sync_head;
-        sync_head.th_seq=htonl(ctx->initial_sequence_num);
-        sync_head.th_flags=TH_SYN;
-        sync_head.th_win=MAXBUF;
-        sync_head.th_sum=calcCheckSum(sync_head);
-        stcp_network_send(sd,&sync_head,sizeof(tcphdr),NULL);
 
-        tcphdr recv_head;
-        stcp_network_recv(sd,&recv_head,sizeof(tcphdr));
-        if(!checkCheckSum(recv_head)){
-            return;
-        } 
-        if(recv_head.flags!=TH_SYN&TH_ACK){
-            return;
-        }
-
-
-        ctx->current_window=recv_head.th_win;
-
-    } else {
-
-    }
     /* XXX: you should send a SYN packet here if is_active, or wait for one
      * to arrive if !is_active.  after the handshake completes, unblock the
      * application with stcp_unblock_application(sd).  you may also use
@@ -153,7 +130,13 @@ void transport_init(mysocket_t sd, bool_t is_active)
      * if connection fails; to do so, just set errno appropriately (e.g. to
      * ECONNREFUSED, etc.) before calling the function.
      */
-    ctx->connection_state = CSTATE_ESTABLISHED;
+    
+    if(is_active){
+        ctx->state = CLOSED;
+    } else {
+        ctx->state = LISTEN; 
+    }
+
     stcp_unblock_application(sd);
 
     control_loop(sd, ctx);
@@ -177,41 +160,28 @@ static void generate_initial_seq_num(context_t *ctx)
 #endif
 }
 
-typedef enum State{
+State get_next_state(context_t *ctx, int event) {
 
-    LISTEN_OR_CLOSED,  
-
-    CONNECT, 
-    ACCEPT, 
-
-    ESTABLISHED, 
-
-    FIN_WAIT_1,
-    FIN_WAIT_2,
-    CLOSE_WAIT,
-    LAST_CALL,
-
-    ERROR,
-} State ;
-
-State execute_state(State state, int event) {
-
-    switch (*state) {
-        case LISTEN_OR_CLOSED:
+    switch (ctx->state) {
+        case CLOSED:
             switch(event){
                 case APP_DATA: return CONNECT; 
+                default: return ERROR; 
+            }
+        case LISTEN:
+            switch(event){
                 case NETWORK_DATA: return ACCEPT;
-                default return ERROR; 
+                default: return ERROR; 
             }
         case CONNECT: 
             switch(event){
-                case NETWORK_DATA: return ESTABLISHED;
-                default return ERROR;
+                case NETWORK_DATA: return ACTIVE_ESTABLISHED;
+                default: return ERROR;
             }
         case ACCEPT: 
             switch(event){
-                case NETWORK_DATA: return ESTABLISHED;
-                default return ERROR;
+                case NETWORK_DATA: return PASSIVE_ESTABLISHED;
+                default: return ERROR;
             }
         default:
             return ERROR;
@@ -219,6 +189,25 @@ State execute_state(State state, int event) {
 
     }
 }
+
+static void send_syn(mysocket_t sd, context_t *ctx){
+
+    // STCPHeader* head = new STCPHeader();
+
+    // head->sport = ctx->
+
+    // stcp_network_send(sd, )
+}
+static void recv_syn_send_synack(mysocket_t sd, context_t *ctx){
+
+}
+static void recv_synack_send_ack(mysocket_t sd, context_t *ctx){
+
+}
+static void recv_ack(mysocket_t sd, context_t *ctx){
+
+}
+
 
 
 /* control_loop() is the main STCP loop; it repeatedly waits for one of the
@@ -233,56 +222,36 @@ static void control_loop(mysocket_t sd, context_t *ctx)
     assert(ctx);
     assert(!ctx->done);
 
+    //maps current, next state to a fxn
+    std::map<std::pair<State, State>, std::function<void(mysocket_t, context_t*)>> fxn_map = {
 
-    State state;
+        //fxn associated with the start-up. 
+        {{CLOSED, CONNECT}, send_syn},
+        {{LISTEN, ACCEPT}, recv_syn_send_synack},
+        {{CONNECT, ACTIVE_ESTABLISHED}, recv_synack_send_ack},
+        {{ACCEPT, PASSIVE_ESTABLISHED}, recv_ack}, 
+
+        //fxn associated with the establishment. 
+    };
 
     while (!ctx->done)
     {
-
         unsigned int event; 
         event = stcp_wait_for_event(sd, 0, NULL);
 
-        state = execute_state(state, event)
+        State next_state = get_next_state(ctx, event);
 
-        /*
-        switch(state){
-            
-            case CLOSED_OR_LISTEN: 
+        if(next_state == ERROR){
 
-                unsigned int event; 
-                event = stcp_wait_for_event(sd, 0, NULL);
+            //not sure exactly what should be done here
+            exit(1);
+        } 
 
-                if(event == NETWORK_DATA){
-                    recv_syn_send_synack();
-                    state = ACCEPT;
-                } else if (event == APP_DATA){
-                    send_syn();
-                    state = CONNECT;
-                } else {
-                    handle_error();
-                }
+        //execute the event; 
+        fxn_map[{ctx->state, next_state}](sd, ctx);
 
-                break;
-
-            case CONNECT:
-
-                unsigned int event; 
-                event = stcp_wait_for_event(sd, 0, NULL);
-
-                if(event == NETWORK_DATA){
-                    recv_syn_send_ack();
-                }
-
-
-            case ACCEPT: 
-            case
-
-
-            //if it doesn't meet any cases, something is wong. 
-            default:
-                exit(1);
-        }
-        */
+        //advance the state
+        ctx->state = next_state;
 
         // unsigned int event;
 
