@@ -24,6 +24,8 @@
 #include <map>
 #include <functional>
 
+#define MAXBUF 3072
+
 struct cBuffer{
     int start=0;
     int end=0;
