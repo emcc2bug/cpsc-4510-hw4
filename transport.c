@@ -25,50 +25,62 @@
 #include <functional>
 
 #define MAXBUF 3072
-
 struct cBuffer{
     int start=0;
     int end=0;
     char buffer[MAXBUF];
 };
 
+int getSize(cBuffer* in){
+    return (in->end - in->start + MAXBUF) % MAXBUF;
+}
+
 int slideWindow(cBuffer* in, int amount){
     if(amount>getSize(in)){
         return -1;
     }
     in->start+=amount;
-    in->start%MAXBUF;
+    in->start=in->start%MAXBUF;
     return 1;
-}
-
-int getSize(cBuffer* in){
-    return (in->end-in->start+MAXBUF)%MAXBUF;
 }
 
 char* getWindow(cBuffer* in){
     int size=getSize(in);
     char* out=new char[size];
-    if(size!=0){
-        out[size-1]=0;
-    }
-    for(int i = 0;i<size;i++){
-        out[i]=in->buffer[(in->start+i)%MAXBUF];
-    }
-    return out;
 }
 
 int insertWindow(cBuffer* in, char* inString){
     int totalAdded=0;
-    for(int i = 0;i<strlen(inString);i++){
+    for(size_t i = 0;i<strlen(inString);i++){
         if(getSize(in)+1>=MAXBUF){
             break;
         }
-        in->buffer[(in->end)%MAXBUF]=inString[i];
-        in->buffer[(in->end+1)%MAXBUF]=0;
-        totalAdded++;
-        in->end++;
     }
     return totalAdded;
+}
+
+int calcCheckSum(STCPHeader input){
+    int size=sizeof(tcphdr);
+    char * interpretBuffer=(char*)malloc(size);
+    memcpy(interpretBuffer,(const void*)&input,size);
+    int intermediary=0;
+    int total=0;
+    for(int i=0;i<size;i++){
+        intermediary=0;
+        intermediary=intermediary&interpretBuffer[i];
+        total=total+intermediary;
+    }
+    return total;
+}
+
+bool checkCheckSum(STCPHeader input){
+    int sum=input.th_sum;
+    input.th_sum=0;
+    if(calcCheckSum(input)==sum){
+        return true;
+    } else {
+        return false;
+    }
 }
 
 typedef enum State {
