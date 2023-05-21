@@ -20,11 +20,16 @@
 #include "mysock.h"
 #include "stcp_api.h"
 #include "transport.h"
+#define MAXBUF 3072
 struct cBuffer{
     int start=0;
     int end=0;
     char buffer[MAXBUF];
 };
+
+int getSize(cBuffer* in){
+    return (in->end-in->start+MAXBUF)%MAXBUF;
+}
 
 int slideWindow(cBuffer* in, int amount){
     if(amount>getSize(in)){
@@ -33,10 +38,6 @@ int slideWindow(cBuffer* in, int amount){
     in->start+=amount;
     in->start%MAXBUF;
     return 1;
-}
-
-int getSize(cBuffer* in){
-    return (in->end-in->start+MAXBUF)%MAXBUF;
 }
 
 char* getWindow(cBuffer* in){
@@ -83,6 +84,19 @@ typedef struct
 static void generate_initial_seq_num(context_t *ctx);
 static void control_loop(mysocket_t sd, context_t *ctx);
 
+int calcCheckSum(tcphdr input){
+    int size=sizeof(tcphdr);
+    char * interpretBuffer=malloc(size);
+    memcpy(interpretBuffer,input,size);
+    int intermediary=0;
+    int total=0;
+    for(int i=0;i<size;i++){
+        intermediary=0;
+        intermediary=intermediary&interpretBuffer[i];
+        total=total+intermediary;
+    }
+    return total;
+}
 
 /* initialise the transport layer, and start the main loop, handling
  * any data from the peer or the application.  this function should not
@@ -97,6 +111,15 @@ void transport_init(mysocket_t sd, bool_t is_active)
 
     generate_initial_seq_num(ctx);
 
+    if(is_active){
+        sync_head;
+        sync_head.th_seq=htonl(ctx->initial_sequence_num);
+        sync_head.th_flags=TH_SYN;
+        sync_head.th_win=MAXBUF;
+        sync_head.th_sum=calcCheckSum(sync_head);
+    } else {
+        
+    }
     /* XXX: you should send a SYN packet here if is_active, or wait for one
      * to arrive if !is_active.  after the handshake completes, unblock the
      * application with stcp_unblock_application(sd).  you may also use
@@ -192,6 +215,4 @@ void our_dprintf(const char *format,...)
     fputs(buffer, stdout);
     fflush(stdout);
 }
-
-
 
