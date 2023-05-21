@@ -36,7 +36,7 @@ int slideWindow(cBuffer* in, int amount){
         return -1;
     }
     in->start+=amount;
-    in->start%MAXBUF;
+    in->start=in->start%MAXBUF;
     return 1;
 }
 
@@ -54,7 +54,7 @@ char* getWindow(cBuffer* in){
 
 int insertWindow(cBuffer* in, char* inString){
     int totalAdded=0;
-    for(int i = 0;i<strlen(inString);i++){
+    for(size_t i = 0;i<strlen(inString);i++){
         if(getSize(in)+1>=MAXBUF){
             break;
         }
@@ -76,6 +76,8 @@ typedef struct
 
     int connection_state;   /* state of the connection (established, etc.) */
     tcp_seq initial_sequence_num;
+    int receiver_seq_size;
+    cBuffer current_window;
 
     /* any other connection-wide global variables go here */
 } context_t;
@@ -86,8 +88,8 @@ static void control_loop(mysocket_t sd, context_t *ctx);
 
 int calcCheckSum(tcphdr input){
     int size=sizeof(tcphdr);
-    char * interpretBuffer=malloc(size);
-    memcpy(interpretBuffer,input,size);
+    char * interpretBuffer=(char*)malloc(size);
+    memcpy(interpretBuffer,(const void*)&input,size);
     int intermediary=0;
     int total=0;
     for(int i=0;i<size;i++){
@@ -98,6 +100,15 @@ int calcCheckSum(tcphdr input){
     return total;
 }
 
+bool checkCheckSum(tcphdr input){
+    int sum=input.th_sum;
+    input.th_sum=0;
+    if(calcCheckSum(input)==sum){
+        return true;
+    } else {
+        return false;
+    }
+}
 /* initialise the transport layer, and start the main loop, handling
  * any data from the peer or the application.  this function should not
  * return until the connection is closed.
@@ -112,13 +123,27 @@ void transport_init(mysocket_t sd, bool_t is_active)
     generate_initial_seq_num(ctx);
 
     if(is_active){
-        sync_head;
+        tcphdr sync_head;
         sync_head.th_seq=htonl(ctx->initial_sequence_num);
         sync_head.th_flags=TH_SYN;
         sync_head.th_win=MAXBUF;
         sync_head.th_sum=calcCheckSum(sync_head);
-    } else {
+        stcp_network_send(sd,&sync_head,sizeof(tcphdr),NULL);
+
+        tcphdr recv_head;
+        stcp_network_recv(sd,&recv_head,sizeof(tcphdr));
+        if(!checkCheckSum(recv_head)){
+            return;
+        } 
+        if(recv_head.flags!=TH_SYN&TH_ACK){
+            return;
+        }
         
+
+        ctx->current_window=recv_head.th_win;
+
+    } else {
+
     }
     /* XXX: you should send a SYN packet here if is_active, or wait for one
      * to arrive if !is_active.  after the handshake completes, unblock the
