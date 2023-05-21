@@ -123,8 +123,7 @@ static void generate_initial_seq_num(context_t *ctx)
     /* please don't change this! */
     ctx->initial_sequence_num = 1;
 #else
-    /* you have to fill this up */
-    /*ctx->initial_sequence_num =;*/
+    ctx->initial_sequence_num = rand(RAND_MAX);
 #endif
 }
 
@@ -152,11 +151,18 @@ static void control_loop(mysocket_t sd, context_t *ctx)
         /* check whether it was the network, app, or a close request */
         if (event & APP_DATA)
         {
-            /* the application has requested that data be sent */
-            /* see stcp_app_recv() */
+            // request data from application
+            // process input
+            // repackage input
+            // send downwards to network
         }
-
-        /* etc. */
+        else if (event & NETWORK_DATA) 
+        {
+            // request data from network
+            // process input
+            // repackage input
+            // send upwards to application
+        }
     }
 }
 
