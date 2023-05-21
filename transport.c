@@ -20,24 +20,24 @@
 #include "mysock.h"
 #include "stcp_api.h"
 #include "transport.h"
-#define MAXBUF 3072
+
 struct cBuffer{
     int start=0;
     int end=0;
     char buffer[MAXBUF];
 };
 
-int getSize(cBuffer* in){
-    return (in->end-in->start+MAXBUF)%MAXBUF;
-}
-
 int slideWindow(cBuffer* in, int amount){
     if(amount>getSize(in)){
         return -1;
     }
     in->start+=amount;
-    in->start=in->start%MAXBUF;
+    in->start%MAXBUF;
     return 1;
+}
+
+int getSize(cBuffer* in){
+    return (in->end-in->start+MAXBUF)%MAXBUF;
 }
 
 char* getWindow(cBuffer* in){
@@ -54,7 +54,7 @@ char* getWindow(cBuffer* in){
 
 int insertWindow(cBuffer* in, char* inString){
     int totalAdded=0;
-    for(size_t i = 0;i<strlen(inString);i++){
+    for(int i = 0;i<strlen(inString);i++){
         if(getSize(in)+1>=MAXBUF){
             break;
         }
@@ -76,8 +76,6 @@ typedef struct
 
     int connection_state;   /* state of the connection (established, etc.) */
     tcp_seq initial_sequence_num;
-    int receiver_seq_size;
-    cBuffer current_window;
 
     /* any other connection-wide global variables go here */
 } context_t;
@@ -86,29 +84,7 @@ typedef struct
 static void generate_initial_seq_num(context_t *ctx);
 static void control_loop(mysocket_t sd, context_t *ctx);
 
-int calcCheckSum(tcphdr input){
-    int size=sizeof(tcphdr);
-    char * interpretBuffer=(char*)malloc(size);
-    memcpy(interpretBuffer,(const void*)&input,size);
-    int intermediary=0;
-    int total=0;
-    for(int i=0;i<size;i++){
-        intermediary=0;
-        intermediary=intermediary&interpretBuffer[i];
-        total=total+intermediary;
-    }
-    return total;
-}
 
-bool checkCheckSum(tcphdr input){
-    int sum=input.th_sum;
-    input.th_sum=0;
-    if(calcCheckSum(input)==sum){
-        return true;
-    } else {
-        return false;
-    }
-}
 /* initialise the transport layer, and start the main loop, handling
  * any data from the peer or the application.  this function should not
  * return until the connection is closed.
@@ -122,29 +98,6 @@ void transport_init(mysocket_t sd, bool_t is_active)
 
     generate_initial_seq_num(ctx);
 
-    if(is_active){
-        tcphdr sync_head;
-        sync_head.th_seq=htonl(ctx->initial_sequence_num);
-        sync_head.th_flags=TH_SYN;
-        sync_head.th_win=MAXBUF;
-        sync_head.th_sum=calcCheckSum(sync_head);
-        stcp_network_send(sd,&sync_head,sizeof(tcphdr),NULL);
-
-        tcphdr recv_head;
-        stcp_network_recv(sd,&recv_head,sizeof(tcphdr));
-        if(!checkCheckSum(recv_head)){
-            return;
-        } 
-        if(recv_head.flags!=TH_SYN&TH_ACK){
-            return;
-        }
-        
-
-        ctx->current_window=recv_head.th_win;
-
-    } else {
-
-    }
     /* XXX: you should send a SYN packet here if is_active, or wait for one
      * to arrive if !is_active.  after the handshake completes, unblock the
      * application with stcp_unblock_application(sd).  you may also use
@@ -171,8 +124,52 @@ static void generate_initial_seq_num(context_t *ctx)
     /* please don't change this! */
     ctx->initial_sequence_num = 1;
 #else
-    ctx->initial_sequence_num = rand(RAND_MAX);
+    /* you have to fill this up */
+    /*ctx->initial_sequence_num =;*/
 #endif
+}
+
+typedef enum State{
+
+    LISTEN_OR_CLOSED,  
+
+    CONNECT, 
+    ACCEPT, 
+
+    ESTABLISHED, 
+
+    FIN_WAIT_1,
+    FIN_WAIT_2,
+    CLOSE_WAIT,
+    LAST_CALL,
+
+    ERROR,
+} State ;
+
+State execute_state(State state, int event) {
+
+    switch (*state) {
+        case LISTEN_OR_CLOSED:
+            switch(event){
+                case APP_DATA: return CONNECT; 
+                case NETWORK_DATA: return ACCEPT;
+                default return ERROR; 
+            }
+        case CONNECT: 
+            switch(event){
+                case NETWORK_DATA: return ESTABLISHED;
+                default return ERROR;
+            }
+        case ACCEPT: 
+            switch(event){
+                case NETWORK_DATA: return ESTABLISHED;
+                default return ERROR;
+            }
+        default:
+            return ERROR;
+
+
+    }
 }
 
 
@@ -188,29 +185,71 @@ static void control_loop(mysocket_t sd, context_t *ctx)
     assert(ctx);
     assert(!ctx->done);
 
+
+    State state;
+
     while (!ctx->done)
     {
-        unsigned int event;
 
-        /* see stcp_api.h or stcp_api.c for details of this function */
-        /* XXX: you will need to change some of these arguments! */
+        unsigned int event; 
         event = stcp_wait_for_event(sd, 0, NULL);
 
-        /* check whether it was the network, app, or a close request */
-        if (event & APP_DATA)
-        {
-            // request data from application
-            // process input
-            // repackage input
-            // send downwards to network
+        state = execute_state(state, event)
+
+        /*
+        switch(state){
+            
+            case CLOSED_OR_LISTEN: 
+
+                unsigned int event; 
+                event = stcp_wait_for_event(sd, 0, NULL);
+
+                if(event == NETWORK_DATA){
+                    recv_syn_send_synack();
+                    state = ACCEPT;
+                } else if (event == APP_DATA){
+                    send_syn();
+                    state = CONNECT;
+                } else {
+                    handle_error();
+                }
+
+                break;
+
+            case CONNECT:
+
+                unsigned int event; 
+                event = stcp_wait_for_event(sd, 0, NULL);
+
+                if(event == NETWORK_DATA){
+                    recv_syn_send_ack();
+                }
+
+
+            case ACCEPT: 
+            case
+
+
+            //if it doesn't meet any cases, something is wong. 
+            default:
+                exit(1);
         }
-        else if (event & NETWORK_DATA) 
-        {
-            // request data from network
-            // process input
-            // repackage input
-            // send upwards to application
-        }
+        */
+
+        // unsigned int event;
+
+        // /* see stcp_api.h or stcp_api.c for details of this function */
+        // /* XXX: you will need to change some of these arguments! */
+        // event = stcp_wait_for_event(sd, 0, NULL);
+
+        // /* check whether it was the network, app, or a close request */
+        // if (event & APP_DATA)
+        // {
+        //     /* the application has requested that data be sent */
+        //     /* see stcp_app_recv() */
+        // }
+
+        // /* etc. */
     }
 }
 
@@ -240,4 +279,6 @@ void our_dprintf(const char *format,...)
     fputs(buffer, stdout);
     fflush(stdout);
 }
+
+
 
