@@ -59,7 +59,7 @@ int insertWindow(cBuffer* in, char* inString){
     return totalAdded;
 }
 
-int calcCheckSum(STCPHeader input){
+int calcCheckSum(tcphdr input){
     int size=sizeof(tcphdr);
     char * interpretBuffer=(char*)malloc(size);
     memcpy(interpretBuffer,(const void*)&input,size);
@@ -73,7 +73,7 @@ int calcCheckSum(STCPHeader input){
     return total;
 }
 
-bool checkCheckSum(STCPHeader input){
+bool checkCheckSum(tcphdr input){
     int sum=input.th_sum;
     input.th_sum=0;
     if(calcCheckSum(input)==sum){
@@ -108,9 +108,14 @@ typedef struct
     bool_t done;    /* TRUE once connection is closed */
 
     State state;   /* state of the connection (established, etc.) */
+
     tcp_seq initial_sequence_num;
+    tcp_seq current_sequence_num;
+    tcp_seq opposite_current_sequence_num;
 
     /* any other connection-wide global variables go here */
+    int tcp_opposite_window_size; 
+    int tcp_window_size;
 } context_t;
 
 static void send_syn(mysocket_t sd, context_t *ctx);
@@ -206,20 +211,86 @@ State get_next_state(context_t *ctx, int event) {
 
 static void send_syn(mysocket_t sd, context_t *ctx){
 
-    // STCPHeader* head = new STCPHeader();
+    STCPHeader* send_header = new STCPHeader();
 
-    // head->sport = ctx->
+    memset(send_header, 0, sizeof(*send_header));
 
-    // stcp_network_send(sd, )
+    generate_initial_seq_num(ctx);
+
+    send_header->th_seq = ctx->initial_sequence_num;
+    send_header->th_win = MAXBUF;
+    send_header->th_flags |= TH_SYN;
+
+    stcp_network_send(sd, send_header, sizeof(*send_header));
+
+    ctx->initial_sequence_num = send_header->th_seq;
+    ctx->current_sequence_num = send_header->th_seq;
+
+    delete send_header;
+
 }
+
 static void recv_syn_send_synack(mysocket_t sd, context_t *ctx){
 
-}
-static void recv_synack_send_ack(mysocket_t sd, context_t *ctx){
+    STCPHeader* recv_header = new STCPHeader();
+    STCPHeader* send_header = new STCPHeader();
 
+    memset(recv_header, 0, sizeof(*recv_header));
+    memset(send_header, 0, sizeof(*send_header));
+
+    stcp_app_recv(sd, recv_header, sizeof(*recv_header));
+
+    ctx->tcp_opposite_window_size = recv_header->th_win; 
+    ctx->tcp_window_size = MAXBUF;
+
+    ctx->opposite_current_sequence_num = recv_header->th_seq;
+
+    if(recv_header->th_flags & TH_SYN != TH_SYN){
+        //some sort of error handling
+    }
+
+    send_header->th_seq = ctx->initial_sequence_num;
+    send_header->th_ack = ctx->initial_sequence_num;
+
+    send_header->th_win = MAXBUF;
+    send_header->th_flags |= TH_SYN;
+    send_header->th_flags |= TH_ACK;
+
+    stcp_network_send(sd, send_header, sizeof(*send_header));
+    
+}
+
+static void recv_synack_send_ack(mysocket_t sd, context_t *ctx){
+    
+    STCPHeader* recv_header = new STCPHeader();
+    STCPHeader* send_header = new STCPHeader();
+
+    memset(recv_header, 0, sizeof(*recv_header));
+    memset(send_header, 0, sizeof(*send_header));
+
+    stcp_app_recv(sd, recv_header, sizeof(*recv_header));
+
+    ctx->tcp_opposite_window_size = recv_header->th_win; 
+    ctx->tcp_window_size = MAXBUF;
+
+    if(recv_header->th_flags & TH_ACK != TH_ACK){
+        //some sort of error handling
+    }
 }
 static void recv_ack(mysocket_t sd, context_t *ctx){
 
+    STCPHeader* recv_header = new STCPHeader();
+
+    memset(recv_header, 0, sizeof(*recv_header));
+
+    stcp_app_recv(sd, recv_header, sizeof(*recv_header));
+
+    ctx->tcp_opposite_window_size = recv_header->th_win; 
+    ctx->tcp_window_size = MAXBUF;
+
+    if(recv_header->th_flags & TH_SYN != TH_SYN && recv_header->th_flags & TH_ACK != TH_ACK){
+        //some sort of error handling
+    }
 }
 
 
