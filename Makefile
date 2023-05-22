@@ -5,8 +5,8 @@
 include ENVCFG.MK
 
 CC=g++
-CFLAGS=-g -D$(ENV) -D_REENTRANT $(ENVCFLAGS) -Wall -W -Wno-unused-function \
-       -Wno-unused-parameter #-DDEBUG
+CFLAGS=-g -D$(ENV) -D_REENTRANT $(ENVCFLAGS) -Wall -W -Wno-unused-function -std=c++11 \
+       -Wno-unused-parameter #-DDEBUG 
 LIBS=$(ENVLIBS)
 MAKEFILE=Makefile
 LN=ln
