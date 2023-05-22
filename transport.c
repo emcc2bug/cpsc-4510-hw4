@@ -47,14 +47,25 @@ int slideWindow(cBuffer* in, int amount){
 char* getWindow(cBuffer* in){
     int size=getSize(in);
     char* out=new char[size];
+    if(size!=0){
+        out[size-1]=0;
+    }
+    for(int i = 0;i<size;i++){
+        out[i]=in->buffer[(in->start+i)%MAXBUF];
+    }
+    return out;
 }
 
 int insertWindow(cBuffer* in, char* inString){
     int totalAdded=0;
-    for(size_t i = 0;i<strlen(inString);i++){
+    for(int i = 0;i<strlen(inString);i++){
         if(getSize(in)+1>=MAXBUF){
             break;
         }
+        in->buffer[(in->end)%MAXBUF]=inString[i];
+        in->buffer[(in->end+1)%MAXBUF]=0;
+        totalAdded++;
+        in->end++;
     }
     return totalAdded;
 }
@@ -330,7 +341,7 @@ static void recv_synack_send_ack(mysocket_t sd, context_t *ctx){
         //some sort of error handling
         // i thiiiiiiiiiiink this is meant to be state = ERROR & then bail because some weird shit happened
         ctx->state = ERROR;
-        perror("error in synack")
+        perror("error in synack");
     }
 }
 static void recv_ack(mysocket_t sd, context_t *ctx){
@@ -347,7 +358,7 @@ static void recv_ack(mysocket_t sd, context_t *ctx){
     if(recv_header->th_flags & TH_SYN != TH_SYN && recv_header->th_flags & TH_ACK != TH_ACK){
         //some sort of error handling
         ctx->state = ERROR;
-        perror("error in ack of syn")
+        perror("error in ack of syn");
     }
 }
 
@@ -441,6 +452,5 @@ void our_dprintf(const char *format,...)
     fputs(buffer, stdout);
     fflush(stdout);
 }
-
 
 
