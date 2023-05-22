@@ -58,7 +58,7 @@ char* getWindow(cBuffer* in){
 
 int insertWindow(cBuffer* in, char* inString){
     int totalAdded=0;
-    for(int i = 0;i<strlen(inString);i++){
+    for(size_t i = 0;i<strlen(inString);i++){
         if(getSize(in)+1>=MAXBUF){
             break;
         }
@@ -111,6 +111,16 @@ typedef enum State {
     LAST_CALL,
 
     ERROR,
+
+    //seems like these names are off limits
+
+    // ECONNREFUSED, 
+    // ECONNABORTED,
+
+    ERROR_REFUSED,
+    ERROR_ABORTED,
+
+
 } State;
 
 /* this structure is global to a mysocket descriptor */
@@ -186,8 +196,11 @@ void transport_init(mysocket_t sd, bool_t is_active)
         control_loop(sd, ctx);
     }
     else { // maybe idk
-        if (is_active) return ECONNREFUSED;
-        else return ECONNABORTED;
+
+        //can't return from a void silly goose
+
+        // if (is_active) return ECONNREFUSED;
+        // else return ECONNABORTED;
     }
 
     /* do any cleanup here */
@@ -218,11 +231,13 @@ State get_next_state(context_t *ctx, int event) {
                 case APP_DATA: return CONNECT; 
                 default: return ERROR_REFUSED; 
             }
+            break;
         case LISTEN:
             switch(event){
                 case NETWORK_DATA: return ACCEPT;
                 default: return ERROR_ABORTED; 
             }
+            break;
         case CONNECT: 
             switch(event){
                 case NETWORK_DATA: return ACTIVE_ESTABLISHED;
@@ -308,7 +323,7 @@ static void recv_syn_send_synack(mysocket_t sd, context_t *ctx){
 
     ctx->opposite_current_sequence_num = recv_header->th_seq;
 
-    if(recv_header->th_flags & TH_SYN != TH_SYN){
+    if((recv_header->th_flags & TH_SYN) != TH_SYN){
         // error handling?
         ctx->state = ERROR;
     }
@@ -337,7 +352,7 @@ static void recv_synack_send_ack(mysocket_t sd, context_t *ctx){
     ctx->tcp_opposite_window_size = recv_header->th_win; 
     ctx->tcp_window_size = MAXBUF;
 
-    if(recv_header->th_flags & TH_ACK != TH_ACK){
+    if((recv_header->th_flags & TH_ACK) != TH_ACK){
         //some sort of error handling
         // i thiiiiiiiiiiink this is meant to be state = ERROR & then bail because some weird shit happened
         ctx->state = ERROR;
@@ -355,7 +370,7 @@ static void recv_ack(mysocket_t sd, context_t *ctx){
     ctx->tcp_opposite_window_size = recv_header->th_win; 
     ctx->tcp_window_size = MAXBUF;
 
-    if(recv_header->th_flags & TH_SYN != TH_SYN && recv_header->th_flags & TH_ACK != TH_ACK){
+    if((recv_header->th_flags & TH_SYN) != TH_SYN && (recv_header->th_flags & TH_ACK) != TH_ACK){
         //some sort of error handling
         ctx->state = ERROR;
         perror("error in ack of syn");
