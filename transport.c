@@ -486,14 +486,16 @@ static void recv_sumthin_from_network(mysocket_t sd, context_t *ctx){
         //no the seq_number are adjusted when stuff is sent. 
         // ctx->current_sequence_num=recv_header->th_ack;
 
-    } else if(recv_header->th_flags&TH_FIN) { 
+    } 
+    if(recv_header->th_flags&TH_FIN) { 
         ctx->fin_ack = 1;
         #if ESTABLISHED_PRINT
         std::cout << "      RECV FIN" << std::endl;
         #endif
         ctx->state = PASSIVE_PRECLOSE;
         // ctx->state=PASSIVE_PRECLOSE; /////////////////////////////////////////////////////// change for fsm, evelyn
-    } else { //otherwise access the data part of the packet
+    } 
+    if(amt_data>0) { //otherwise access the data part of the packet
         
         #if ESTABLISHED_PRINT
         std::cout << "      RECV DATA" << std::endl;
