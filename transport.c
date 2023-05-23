@@ -551,9 +551,7 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 
     while (!ctx->done)
     {
-
         event = stcp_wait_for_event(sd, ANY_EVENT, NULL);
-
         State next_state = get_next_state(ctx, event);
 
         if(next_state == ERROR){
