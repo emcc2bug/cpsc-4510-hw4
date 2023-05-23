@@ -150,9 +150,10 @@ typedef struct
 
     cBuffer current_buffer;
     cBuffer opposite_buffer;
+
+    // used only in close loop smiley
+    int fin_ack;
 } context_t;
-
-
 
 static void send_syn(mysocket_t sd, context_t *ctx);
 static void recv_syn_send_synack(mysocket_t sd, context_t *ctx);
@@ -186,9 +187,9 @@ std::map<std::pair<State, State>, std::function<void(mysocket_t, context_t*)>> f
 void transport_init(mysocket_t sd, bool_t is_active)
 {
 
-#if HANDSHAKE_PRINT
-    std::cout << "IN TRANSPORT_INIT" << std::endl;
-#endif
+    #if HANDSHAKE_PRINT
+        std::cout << "IN TRANSPORT_INIT" << std::endl;
+    #endif
     context_t *ctx;
 
     ctx = (context_t *) calloc(1, sizeof(context_t));
@@ -298,15 +299,14 @@ State get_next_state(context_t *ctx, int event) {
         case PASSIVE_ESTABLISHED:
             switch(event){
                 default: return PASSIVE_ESTABLISHED;
-                // this *shouldn't* change state here, it should change state in response to
-                // seeing a FIN packet. so i don't think we do anything here.
-            }
+            }        
+        case ACTIVE_PRECLOSE:
+            return FIN_WAIT_1;
+        case PASSIVE_PRECLOSE:
+            return CLOSE_WAIT;
         case FIN_WAIT_1:
-            switch(event){
-                case NETWORK_DATA: return FIN_WAIT_2;
-                // maybe? maybe not? i think we're meant to switch state in response to getting an ACK for our *FIN packet specifically*, but also...
-                default: return FIN_WAIT_1;
-            }
+            // irrelevant
+            return FIN_WAIT_1;
         case FIN_WAIT_2:
             switch(event){
                 case NETWORK_DATA: return CLOSED; // should be okay because it'll only loop if not done, and we can set done to true.
@@ -447,36 +447,7 @@ static void recv_ack(mysocket_t sd, context_t *ctx){
     ctx->current_sequence_num++;
 }
 
-// static void recv_data_from_network(mysocket_t sd,context_t *ctx){
-
-
-
-//     char recv_buffer[MAXBUF]; //temp buffer
-
-//     //TODO: needs to be remaining buffer
-//     ssize_t num_read = stcp_network_recv(sd, (void*)&recv_buffer, sizeof(recv_buffer));
-
-//     //null terminating
-//     recv_buffer[num_read] = '\0';
-
-//     //memcpy for ring buffer
-//     insertWindow(&ctx->opposite_buffer,recv_buffer);
-
-//     //now the next byte to be recved, currently needs to be acked
-//     ctx->opposite_current_sequence_num += num_read;
-
-//     //ack that we received
-//     send_just_header(sd,ctx,TH_ACK);
-
-//     //send the data to the app
-//     stcp_app_send(sd,recv_buffer,num_read);
-
-//     //move the ring buffer to receive new data
-//     slideWindow(&ctx->opposite_buffer,num_read);
-// }
-
 static void recv_sumthin_from_network(mysocket_t sd, context_t *ctx){
-
     #if ESTABLISHED_PRINT
     std::cout << "RECV FROM NET" << std::endl;
     #endif
@@ -493,22 +464,25 @@ static void recv_sumthin_from_network(mysocket_t sd, context_t *ctx){
 
     //reads the data into the header
     memcpy(recv_header,recv_buffer, amt_head); //copy the packet head into the struct which analyzes it
-
+    ctx->fin_ack = 2;
     //analyze struct
-    if(recv_header->th_flags&TH_ACK){ //if it is an ack
-
+    if(recv_header->th_flags&TH_ACK) { 
+        ctx->fin_ack = 1;
         #if ESTABLISHED_PRINT
         std::cout << "      RECV ACK" << std::endl;
         std::cout << "      ACK#:" << recv_header->th_ack << std::endl;
         #endif
 
         //TODO: not sure if this works
-        slideWindow(&ctx->current_buffer,recv_header->th_ack-ctx->current_sequence_num); //then record how much data has been received by the other
+        //then record how much data has been received by the other
+        slideWindow(&ctx->current_buffer,recv_header->th_ack-ctx->current_sequence_num);
+        //and record it in the sequence num
         
         //no the seq_number are adjusted when stuff is sent. 
-        // ctx->current_sequence_num=recv_header->th_ack; //and record it in the sequence num
-    } else if(recv_header->th_flags&TH_FIN) { //otherwise if it receives an unsolicited fin
-        
+        // ctx->current_sequence_num=recv_header->th_ack;
+
+    } else if(recv_header->th_flags&TH_FIN) { 
+        ctx->fin_ack = 1;
         #if ESTABLISHED_PRINT
         std::cout << "      RECV FIN" << std::endl;
         #endif
@@ -636,6 +610,40 @@ static void control_loop(mysocket_t sd, context_t *ctx)
     }
 }
 
+static void maid_active(mysocket_t sd, context_t *ctx) {
+    // sends a fin packet. we're not waiting for it to close because that's fin_wait_1's problem
+    send_just_header(sd, ctx, TH_FIN);
+}
+static void maid_passive(mysocket_t sd, context_t *ctx) {
+    // send EOF
+    send_just_header(sd, ctx, TH_FIN);
+}
+
+static void close_fork(mysocket_t sd, context_t *ctx) {
+    recv_sumthin_from_network(sd, ctx);
+    // fin has been received before ack of fin, enter CLOSING
+    if (ctx->fin_ack == 1) { 
+        ctx->state = CLOSING;
+        stcp_fin_received(sd);
+    } 
+    // ack received, enter FIN_WAIT_2
+    else 
+        ctx->state = FIN_WAIT_2;
+}
+static void wait_fin(mysocket_t sd, context_t *ctx) {
+    recv_sumthin_from_network(sd, ctx);
+    if (ctx->fin_ack != 1) { // something has terribly gone wrong
+        perror("????? error in FIN_WAIT_2 section");
+    } else {
+        stcp_fin_received(sd);
+    }
+    ctx->done = true;
+}
+
+static void wait_ackfin(mysocket_t sd, context_t *ctx) {
+    recv_sumthin_from_network(sd, ctx);
+    ctx->done = true;
+}
 
 /**********************************************************************/
 /* our_dprintf
