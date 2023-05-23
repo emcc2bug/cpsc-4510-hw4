@@ -30,6 +30,7 @@
 #define MAXBUF 3072
 #define HANDSHAKE_PRINT 1
 #define HANDSHAKE_LOOP_PRINT 0
+#define ESTABLISHED_PRINT 1
 
 
 
@@ -327,6 +328,10 @@ State get_next_state(context_t *ctx, int event) {
 
 static void send_just_header(mysocket_t sd, context_t *ctx, uint8_t current_flags){
     
+    #if HANDSHAKE_PRINT
+    std::cout << "SEND HEAD" << std::endl;
+    #endif
+
     STCPHeader* send_header = new STCPHeader();
 
     memset(send_header, 0, sizeof(STCPHeader));
@@ -360,7 +365,11 @@ static void send_just_header(mysocket_t sd, context_t *ctx, uint8_t current_flag
 }
 
 static void recv_just_header(mysocket_t sd, context_t *ctx, uint8_t current_flags){
-    
+
+    #if HANDSHAKE_PRINT
+    std::cout << "RECV HEAD" << std::endl;
+    #endif
+
     STCPHeader* recv_header = new STCPHeader();
     
     memset(recv_header, 0, sizeof(STCPHeader));
@@ -374,7 +383,7 @@ static void recv_just_header(mysocket_t sd, context_t *ctx, uint8_t current_flag
     }
 
     #if HANDSHAKE_PRINT
-    std::cout << "RECV FLAGS CORRECT" << std::endl;
+    std::cout << "      RECV FLAGS CORRECT" << std::endl;
     #endif
 
     //if SYN then you track the opposite seq number
@@ -408,76 +417,50 @@ static void recv_just_header(mysocket_t sd, context_t *ctx, uint8_t current_flag
 }
 
 static void send_syn(mysocket_t sd, context_t *ctx){
-
-    #if HANDSHAKE_PRINT
-    std::cout << "SEND SYN" << std::endl;
-    #endif
-
     send_just_header(sd,ctx,TH_SYN);
-
 }
 
 static void recv_syn_send_synack(mysocket_t sd, context_t *ctx){
-
-    #if HANDSHAKE_PRINT
-    std::cout << "RECV SYN" << std::endl;
-    #endif
-
     recv_just_header(sd,ctx,TH_SYN);
-
-    #if HANDSHAKE_PRINT
-    std::cout << "SEND SYNACK" << std::endl;
-    #endif
-
     send_just_header(sd,ctx,TH_SYN|TH_ACK);
-
-
 }
 
 static void recv_synack_send_ack(mysocket_t sd, context_t *ctx){
-    
-    #if HANDSHAKE_PRINT
-    std::cout << "RECV SYNACK" << std::endl;
-    #endif
-
-    recv_just_header(sd,ctx,TH_SYN|TH_SYN);
-
-    #if HANDSHAKE_PRINT
-    std::cout << "SEND ACK" << std::endl;
-    #endif
-
+    recv_just_header(sd,ctx,TH_SYN|TH_ACK);
     send_just_header(sd,ctx,TH_ACK);
-
 }
 static void recv_ack(mysocket_t sd, context_t *ctx){
-    #if HANDSHAKE_PRINT
-    std::cout << "RECV ACK" << std::endl;
-    #endif
 
-    STCPHeader* recv_header = new STCPHeader();
-
-    memset(recv_header, 0, sizeof(*recv_header));
-
-    stcp_app_recv(sd, recv_header, sizeof(*recv_header));
-
-    ctx->tcp_opposite_window_size = recv_header->th_win; 
-    ctx->tcp_window_size = MAXBUF;
-
-    if((recv_header->th_flags & TH_SYN) != TH_SYN && (recv_header->th_flags & TH_ACK) != TH_ACK){
-        //some sort of error handling
-        ctx->state = ERROR;
-        perror("error in ack of syn");
-    }
+    recv_just_header(sd,ctx,TH_ACK);
 }
 
 static void recv_data_from_network(mysocket_t sd,context_t *ctx){
-    char recv_buffer[MAXBUF];
-    ssize_t num_read = stcp_network_recv(sd, (void*)recv_buffer,MAXBUF);
-    recv_buffer[num_read]=(char)0;
+
+    #if ESTABLISHED_PRINT
+    std::cout << "RECV FROM NET" << std::endl;
+    #endif
+
+    char recv_buffer[MAXBUF]; //temp buffer
+
+    //TODO: needs to be remaining buffer
+    ssize_t num_read = stcp_network_recv(sd, (void*)&recv_buffer, sizeof(recv_buffer));
+
+    //null terminating
+    recv_buffer[num_read] = '\0';
+
+    //memcpy for ring buffer
     insertWindow(&ctx->opposite_buffer,recv_buffer);
-    ctx->current_sequence_num=ctx->current_sequence_num+num_read;
+
+    //now the next byte to be recved, currently needs to be acked
+    ctx->opposite_current_sequence_num += num_read;
+
+    //ack that we received
     send_just_header(sd,ctx,TH_ACK);
+
+    //send the data to the app
     stcp_app_send(sd,recv_buffer,num_read);
+
+    //move the ring buffer to receive new data
     slideWindow(&ctx->opposite_buffer,num_read);
 }
 
@@ -504,17 +487,40 @@ static void recv_sumthin_from_network(mysocket_t sd, context_t *ctx){
 }
 
 static void recv_sumthin_from_app(mysocket_t sd, context_t *ctx){
-    char recv_buffer[STCP_MSS];
-    size_t num_read=stcp_app_recv(sd,recv_buffer,STCP_MSS);
-    recv_buffer[num_read]='\0';
+    
+    #if ESTABLISHED_PRINT
+    std::cout << "RECV FROM APP" << std::endl;
+    #endif
+    
+    char recv_buffer[STCP_MSS]; //temp recv buffer
+
+    //receive the data from the app
+    size_t num_read = stcp_app_recv(sd,recv_buffer,STCP_MSS);
+
+    //null terminate
+    recv_buffer[num_read] = '\0';
+
+    //memcpy for the ring buffer
     insertWindow(&ctx->current_buffer,recv_buffer);
-    STCPHeader * send_header = new STCPHeader();
-    memset(send_header, 0, sizeof(*send_header));
-    ctx->current_sequence_num=ctx->current_sequence_num+num_read;
+
+    //create the header
+    STCPHeader* send_header = new STCPHeader();
+    memset(send_header, 0, sizeof(STCPHeader));
+
+    //NEED TO CHECK THE RECV HAS ENOUGH ROOM IN BUFFER
+
+    //seq num is first byte in packet
     send_header->th_seq=ctx->current_sequence_num;
     send_header->th_off=5;
     send_header->th_win=(uint16_t) getSize(&ctx->current_buffer);
-    stcp_network_send(sd,send_header,sizeof(send_header),recv_buffer,num_read,NULL);
+
+    //sends it over the network
+    stcp_network_send(sd, send_header, sizeof(STCPHeader), recv_buffer, num_read, NULL);
+
+
+
+    //advances our seq number
+    ctx->current_sequence_num=ctx->current_sequence_num+num_read;
 }
 
 
@@ -530,38 +536,22 @@ static void control_loop(mysocket_t sd, context_t *ctx)
     assert(ctx);
     assert(!ctx->done);
 
-    // this needs to be fixed but i Do Not Understand it so i'm leaving it to one of
-    std::map<std::pair<State, State>, std::function<void(mysocket_t, context_t*)>> fxn_map = {
-
-            //fxn associated with the start-up. 
-        {{CLOSED, CONNECT}, send_syn},
-        {{LISTEN, ACCEPT}, recv_syn_send_synack},
-        {{CONNECT, ACTIVE_ESTABLISHED}, recv_synack_send_ack},
-        {{ACCEPT, PASSIVE_ESTABLISHED}, recv_ack}, 
-
-            //fxn associated with the establishment. 
-    };
-
     unsigned int event; 
 
     while (!ctx->done)
     {
 
-        event = stcp_wait_for_event(sd, 0, NULL);
+        event = stcp_wait_for_event(sd, ANY_EVENT, NULL);
 
-        State next_state = get_next_state(ctx, event);
+        if(event & APP_DATA){
+            recv_sumthin_from_app(sd, ctx);
+        } else if (event & NETWORK_DATA){
+            recv_sumthin_from_network(sd, ctx);
+        }
 
-        if(next_state == ERROR){
-
-            //not sure exactly what should be done here
-            exit(1);
-        } 
-
-        //execute the event; 
-        fxn_map[{ctx->state, next_state}](sd, ctx);
-
-        //advance the state
-        ctx->state = next_state;
+        // } else (event & APP_CLOSE_REQUESTED){
+        //     //evelyn's job
+        // }
 
         // unsigned int event;
 
