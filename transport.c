@@ -21,6 +21,7 @@
 #include "stcp_api.h"
 #include "transport.h"
 
+#include <string>
 #include <cstdlib>
 #include <ctime>
 #include <map>
@@ -360,7 +361,7 @@ static void send_just_header(mysocket_t sd, context_t *ctx, uint8_t current_flag
 
     //if ACK you send the next bit of data you expect to recv
     if(current_flags & TH_ACK){
-        send_header->th_ack = ctx->opposite_current_sequence_num + 1;
+        send_header->th_ack = ctx->opposite_current_sequence_num;
         
         #if HANDSHAKE_PRINT
         std::cout << "      INIT ACK#: " << send_header->th_ack << std::endl;
@@ -422,8 +423,7 @@ static void recv_just_header(mysocket_t sd, context_t *ctx, uint8_t current_flag
         }
     }
     
-    ctx->tcp_opposite_window_size = recv_header->th_win; 
-    ctx->opposite_current_sequence_num = recv_header->th_seq;
+    ctx->tcp_opposite_window_size = recv_header->th_win;
 
     delete recv_header;
 }
@@ -434,16 +434,30 @@ static void send_syn(mysocket_t sd, context_t *ctx){
 
 static void recv_syn_send_synack(mysocket_t sd, context_t *ctx){
     recv_just_header(sd,ctx,TH_SYN);
+
+    //increment when you recv the syn
+    ctx->opposite_current_sequence_num++;
+
     send_just_header(sd,ctx,TH_SYN|TH_ACK);
+
+    
 }
 
 static void recv_synack_send_ack(mysocket_t sd, context_t *ctx){
     recv_just_header(sd,ctx,TH_SYN|TH_ACK);
+
+    //increment when you recv the syn
+    ctx->opposite_current_sequence_num++;
+    //increment when you recv the ack
+    ctx->current_sequence_num++;
+    
     send_just_header(sd,ctx,TH_ACK);
 }
 static void recv_ack(mysocket_t sd, context_t *ctx){
-
     recv_just_header(sd,ctx,TH_ACK);
+
+    //increment when you recv the ack
+    ctx->current_sequence_num++;
 }
 
 static void recv_sumthin_from_network(mysocket_t sd, context_t *ctx){
@@ -452,25 +466,23 @@ static void recv_sumthin_from_network(mysocket_t sd, context_t *ctx){
     #endif
 
     //stores the header and raw data in separate files
-    //to store the header after we copy data in
-    STCPHeader* recv_header = new STCPHeader();
-    //to receive the entire packet
-    char* recv_buffer = new char[sizeof(STCPHeader) + STCP_MSS];
+    STCPHeader* recv_header = new STCPHeader(); //to store the header after we copy data in
+    char* recv_buffer = new char[sizeof(STCPHeader) + STCP_MSS]; //to receive the entire packet
     
     //reads in the data from the network
-    //receive from network the entire packet
-    int num_read = stcp_network_recv(sd, recv_buffer, sizeof(STCPHeader) + STCP_MSS);
+    int num_read = stcp_network_recv(sd, recv_buffer, sizeof(STCPHeader) + STCP_MSS); //receive from network the entire packet]
     
     int amt_head = (size_t)TCP_DATA_START(recv_buffer);
     int amt_data = num_read - amt_head;
 
     //reads the data into the header
-    //copy the packet head into the struct which analyzes it
-    memcpy(recv_header,recv_buffer, amt_head);
+    memcpy(recv_header,recv_buffer, amt_head); //copy the packet head into the struct which analyzes it
 
     #if ESTABLISHED_PRINT
     std::cout << "      OPPOSITE CURRENT SEQ NUMBER: " << recv_header->th_seq << std::endl;
-    std::cout << "      DATA: " << std::string(recv_buffer).substr(amt_head, amt_head + amt_data) << std::endl;
+    //prints everything but the end of line character
+    std::cout << "      DATA: " << std::string(&recv_buffer[amt_head]).substr(0, amt_data - 2) << std::endl;
+    std::cout << "      AMT: " << amt_data << std::endl;
     #endif
 
     ctx->fin_ack = 0;
@@ -478,7 +490,7 @@ static void recv_sumthin_from_network(mysocket_t sd, context_t *ctx){
     if(recv_header->th_flags&TH_ACK) { 
 
         #if ESTABLISHED_PRINT
-        std::cout << "RECV ACK" << std::endl;
+        std::cout << "      RECV ACK" << std::endl;
         #endif
 
         ctx->fin_ack = 2;
@@ -490,29 +502,33 @@ static void recv_sumthin_from_network(mysocket_t sd, context_t *ctx){
     } else if(recv_header->th_flags&TH_FIN) { 
         
         #if ESTABLISHED_PRINT
-        std::cout << "RECV FIN" << std::endl;
+        std::cout << "      RECV FIN" << std::endl;
         #endif
         
         ctx->fin_ack = 1;
         stcp_fin_received(sd);
         ctx->state = PASSIVE_PRECLOSE;
     } 
-        
-        #if ESTABLISHED_PRINT
-        std::cout << "  RECV DATA" << std::endl;
-        #endif
-    // this isn't inside the else b/c we need to be able to process FIN + DATA / FIN + ACK packets
-    //record that data was given to us
-    insertWindow(&ctx->opposite_buffer,recv_buffer);
-    //record the sequence number
-    ctx->opposite_current_sequence_num += num_read;
-    //send an acknowledgement, based off the prerecorded sequence num
-    send_just_header(sd,ctx,TH_ACK);
-    //send the data up
-    stcp_app_send(sd,recv_buffer,num_read);
-    //record that data was sent up
-    slideWindow(&ctx->opposite_buffer,num_read);
 
+    #if ESTABLISHED_PRINT
+    std::cout << "      RECV DATA" << std::endl;
+    #endif
+
+    //TODO: PASCAL FIGURE THIS OUT
+    insertWindow(&ctx->opposite_buffer,recv_buffer); //record that data was given to us
+
+    //increments the opposite sequence number for the ack
+    ctx->opposite_current_sequence_num += amt_data; //record the sequence number
+
+    //send an ack
+    send_just_header(sd,ctx,TH_ACK); 
+
+    //send the data to client
+    stcp_app_send(sd, &recv_buffer[amt_head], amt_data); 
+
+    //TODO: PASCAL FIGURE THIS OUT
+    slideWindow(&ctx->opposite_buffer,num_read); //record that data was sent up
+    
     delete recv_header;
 }
 
@@ -522,18 +538,18 @@ static void recv_sumthin_from_app(mysocket_t sd, context_t *ctx){
     std::cout << "RECV FROM APP" << std::endl;
     #endif
     
- //temp recv buffer
- char* recv_buffer = new char[STCP_MSS];
+    //NEED TO CHECK THE RECV HAS ENOUGH ROOM IN BUFFER
+
+    char* recv_buffer = new char[STCP_MSS]; //temp recv buffer
 
     //receive the data from the app
-    size_t num_read = stcp_app_recv(sd, recv_buffer, STCP_MSS);
-    recv_buffer[num_read] = '\0';
+    size_t num_read = stcp_app_recv(sd, (void*)recv_buffer, STCP_MSS);
 
     #if ESTABLISHED_PRINT
-    std::cout << "      RECV: " << recv_buffer << "(" << num_read << ")"<< std::endl;
+    //print but no end line or carriage returns
+    std::cout << "RECV: " << std::string(recv_buffer, num_read).substr(0, num_read) << std::endl;
     #endif
-
-    //NEED TO CHECK THE RECV HAS ENOUGH ROOM IN BUFFER
+    
     #if ESTABLISHED_PRINT
     std::cout << "      CURRENT SEQ NUM:" << ctx->current_sequence_num << std::endl;
     #endif
@@ -543,7 +559,7 @@ static void recv_sumthin_from_app(mysocket_t sd, context_t *ctx){
 
     send_header->th_win = (uint16_t) getSize(&ctx->current_buffer);
     send_header->th_flags = 0;
-    send_header->th_seq=ctx->current_sequence_num+1;
+    send_header->th_seq=ctx->current_sequence_num;
     send_header->th_off = 5; 
 
     stcp_network_send(sd, (void*)send_header, sizeof(STCPHeader), (void*)recv_buffer, num_read, NULL);
@@ -568,6 +584,12 @@ static void control_loop(mysocket_t sd, context_t *ctx)
     assert(!ctx->done);
 
     unsigned int event; 
+  
+    #if ESTABLISHED_PRINT
+    std::cout << "HANDSHAKE COMPLETE!" << std::endl;
+    std::cout << "SEQ NUM: " << ctx->current_sequence_num << std::endl;
+    std::cout << "OPP SEQ NUM: " << ctx->opposite_current_sequence_num << std::endl;
+    #endif
 
 
     // ESTABLISHED state
