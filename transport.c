@@ -159,9 +159,9 @@ typedef struct
 
     cBuffer current_buffer;
     cBuffer opposite_buffer;
-    
+
     // used only in close loop smiley
-    int fin_ack; 
+    int fin_ack;
 } context_t;
 
 static void send_syn(mysocket_t sd, context_t *ctx);
@@ -447,20 +447,32 @@ static void recv_ack(mysocket_t sd, context_t *ctx){
 }
 
 static void recv_sumthin_from_network(mysocket_t sd, context_t *ctx){
+    #if ESTABLISHED_PRINT
+    std::cout << "RECV FROM NET" << std::endl;
+    #endif
+
+    //stores the header and raw data in separate files
     //to store the header after we copy data in
-    STCPHeader * recv_header = new STCPHeader();
+    STCPHeader* recv_header = new STCPHeader();
     //to receive the entire packet
-    char * recv_buffer = new char[sizeof(STCPHeader)];
+    char* recv_buffer = new char[sizeof(STCPHeader) + STCP_MSS];
+    
+    //reads in the data from the network
     //receive from network the entire packet
-    int num_read = stcp_network_recv(sd,recv_buffer, sizeof(recv_buffer));
+    int num_read = stcp_network_recv(sd, recv_buffer, sizeof(STCPHeader) + STCP_MSS);
+    
+    int amt_head = (size_t)TCP_DATA_START(recv_buffer);
+    int amt_data = num_read - amt_head;
+
+    //reads the data into the header
     //copy the packet head into the struct which analyzes it
-    memcpy(recv_header,recv_buffer,TCP_DATA_START(recv_buffer));
+    memcpy(recv_header,recv_buffer, amt_head);
 
     #if ESTABLISHED_PRINT
-    std::cout << "RECV FROM NET" << std::endl;   
-    std::cout << "  OPPOSITE CURRENT SEQ NUMBER: " << recv_header->th_seq << std::endl;
-    std::cout << "  DATA: " << &recv_buffer[sizeof(STCPHeader)] << std::endl;
+    std::cout << "      OPPOSITE CURRENT SEQ NUMBER: " << recv_header->th_seq << std::endl;
+    std::cout << "      DATA: " << std::string(recv_buffer).substr(amt_head, amt_head + amt_data) << std::endl;
     #endif
+
     ctx->fin_ack = 0;
     //analyze struct
     if(recv_header->th_flags&TH_ACK) { 
