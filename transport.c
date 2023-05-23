@@ -112,6 +112,9 @@ typedef enum State {
     CONNECT, 
     ACCEPT, 
 
+    ACTIVE_PRECLOSE;
+    PASSIVE_PRECLOSE;
+
     PASSIVE_ESTABLISHED, 
     ACTIVE_ESTABLISHED,
 
@@ -486,7 +489,7 @@ static void recv_sumthin_from_network(mysocket_t sd, context_t *ctx){
         #if ESTABLISHED_PRINT
         std::cout << "      RECV FIN" << std::endl;
         #endif
-        
+        ctx->state = PASSIVE_PRECLOSE;
         // ctx->state=PASSIVE_PRECLOSE; /////////////////////////////////////////////////////// change for fsm, evelyn
     } else { //otherwise access the data part of the packet
         
@@ -568,45 +571,37 @@ static void control_loop(mysocket_t sd, context_t *ctx)
     assert(!ctx->done);
 
     unsigned int event; 
+  
+    #if ESTABLISHED_PRINT
+    std::cout << "HANDSHAKE COMPLETE!" << std::endl;
+    std::cout << "SEQ NUM: " << ctx->current_sequence_num << std::endl;
+    std::cout << "OPP SEQ NUM: " << ctx->opposite_current_sequence_num << std::endl;
+    #endif
 
-    
 
-    while (!ctx->done)
+    // ESTABLISHED state
+    while (ctx->state == PASSIVE_ESTABLISHED || ctx->state == ACTIVE_ESTABLISHED)
     {
-
-        #if ESTABLISHED_PRINT
-        // std::cout << "HANDSHAKE COMPLETE!" << std::endl;
-        std::cout << "SEQ NUM: " << ctx->current_sequence_num << std::endl;
-        std::cout << "OPP SEQ NUM: " << ctx->opposite_current_sequence_num << std::endl;
-        std::cout.flush();
-        #endif
-
         event = stcp_wait_for_event(sd, ANY_EVENT, NULL);
 
         if(event & APP_DATA){
             recv_sumthin_from_app(sd, ctx);
         } else if (event & NETWORK_DATA){
             recv_sumthin_from_network(sd, ctx);
+        } else if (event & APP_CLOSE_REQUESTED) {
+            ctx->state = ACTIVE_PRECLOSE;
         }
+    }
+    while (!ctx->done) {
+        event = stcp_wait_for_event(sd, ANY_EVENT, NULL);
+        State next_state = get_next_state(ctx, event);
+        
+        //execute the event; 
+        fxn_map[{ctx->state, next_state}](sd, ctx);
 
-        // } else (event & APP_CLOSE_REQUESTED){
-        //     //evelyn's job
-        // }
-
-        // unsigned int event;
-
-        // /* see stcp_api.h or stcp_api.c for details of this function */
-        // /* XXX: you will need to change some of these arguments! */
-        // event = stcp_wait_for_event(sd, 0, NULL);
-
-        // /* check whether it was the network, app, or a close request */
-        // if (event & APP_DATA)
-        // {
-        //     /* the application has requested that data be sent */
-        //     /* see stcp_app_recv() */
-        // }
-
-        // /* etc. */
+        //advance the state
+        // if statement is b/c FIN_WAIT_1's function will set its own state based on the next packet it receives :)
+        if (ctx->state != FIN_WAIT_2 && ctx->state != CLOSING && ctx->state != PASSIVE_PRECLOSE) ctx->state = next_state;
     }
 }
 
