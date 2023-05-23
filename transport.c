@@ -157,9 +157,11 @@ typedef struct
     int tcp_window_size;
 
     cBuffer current_buffer;
+
+    int fin_ack // used only in close loop smiley
 } context_t;
 
-static bool finsniffer(tcphdr t);
+static int finsniffer(tcphdr t);
 
 static void send_syn(mysocket_t sd, context_t *ctx);
 static void recv_syn_send_synack(mysocket_t sd, context_t *ctx);
@@ -498,7 +500,7 @@ static void recv_sumthin_from_network(mysocket_t sd, context_t *ctx){
     }
     delete recv_header;
 }
-
+// ^^^^^^ passive_preclose should ack the fin that way it's simpler later on :))))
 static void recv_sumthin_from_app(mysocket_t sd, context_t *ctx){
     char recv_buffer[STCP_MSS];
     size_t num_read=stcp_app_recv(sd,recv_buffer,STCP_MSS);
@@ -543,7 +545,7 @@ static void control_loop(mysocket_t sd, context_t *ctx)
     while (!ctx->done)
     {
 
-        event = stcp_wait_for_event(sd, 0, NULL);
+        event = stcp_wait_for_event(sd, ANY_EVENT, NULL);
 
         State next_state = get_next_state(ctx, event);
 
@@ -558,7 +560,8 @@ static void control_loop(mysocket_t sd, context_t *ctx)
         fxn_map[{ctx->state, next_state}](sd, ctx);
 
         //advance the state
-        ctx->state = next_state;
+        // if statement is b/c FIN_WAIT_1's function will set its own state based on the next packet it receives :)
+        if (ctx->state != FIN_WAIT_2 && ctx->state != CLOSING) ctx->state = next_state;
 
         // unsigned int event;
 
@@ -577,8 +580,12 @@ static void control_loop(mysocket_t sd, context_t *ctx)
     }
 }
 
-static bool finsniffer(tcphdr* t) {
-    return (t->th_flags & TH_FIN) == TH_FIN;
+static int finsniffer(tcphdr* t) {
+    if ((t->th_flags & TH_FIN) == TH_FIN)
+        return 1;
+    else if ((t->th_flags & TH_ACK)) == TH_ACK)
+        return 2;
+    else return 0;
 }
 
 static void maid_active(mysocket_t sd, context_t *ctx) {
@@ -588,13 +595,32 @@ static void maid_active(mysocket_t sd, context_t *ctx) {
 static void maid_passive(mysocket_t sd, context_t *ctx) {
     // send EOF
     stcp_fin_received(sd);
-    //
-    
+    send_just_header(sd, ctx, TH_FIN);
 }
 
-static void close_fork(mysocket_t sd, context_t *ctx) {}
-static void wait_fin(mysocket_t sd, context_t *ctx) {}
-static void wait_ackfin(mysocket_t sd, context_t *ctx {}
+static void close_fork(mysocket_t sd, context_t *ctx) {
+    recv_sumthin_from_network(sd, ctx);
+    if (ctx->fin_ack == 1) { // fin has been received, enter CLOSING
+        ctx->state = CLOSING;
+        stcp_fin_received(sd);
+    } 
+    else // ack received, enter FIN_WAIT_2
+        ctx->state = FIN_WAIT_2;
+}
+static void wait_fin(mysocket_t sd, context_t *ctx) {
+    recv_sumthin_from_network(sd, ctx);
+    if (ctx->fin_ack != 1) { // something has terribly gone wrong
+        perror("????? error in FIN_WAIT_2 section");
+    } else {
+        stcp_fin_received(sd);
+    }
+    ctx->done = true;
+}
+
+static void wait_ackfin(mysocket_t sd, context_t *ctx) {
+    recv_sumthin_from_network(sd, ctx);
+    ctx->done = true;
+}
 
 /**********************************************************************/
 /* our_dprintf
