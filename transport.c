@@ -493,9 +493,7 @@ static void recv_sumthin_from_network(mysocket_t sd, context_t *ctx){
         std::cout << "      RECV FIN" << std::endl;
         #endif
         ctx->state = PASSIVE_PRECLOSE;
-        // ctx->state=PASSIVE_PRECLOSE; /////////////////////////////////////////////////////// change for fsm, evelyn
-    } 
-    if(amt_data>0) { //otherwise access the data part of the packet
+    } if (amt_data > 0) { //otherwise access the data part of the packet if it exists
         
         #if ESTABLISHED_PRINT
         std::cout << "      RECV DATA" << std::endl;
@@ -533,7 +531,7 @@ static void recv_sumthin_from_app(mysocket_t sd, context_t *ctx){
 
     char* recv_buffer = new char[STCP_MSS]; //temp recv buffer
     memset(recv_buffer,'\0',STCP_MSS);
-    
+
     //receive the data from the app
     //size_t num_read = stcp_app_recv(sd, (void*)recv_buffer, STCP_MSS);
     size_t num_read = stcp_app_recv(sd, (void*)recv_buffer, MIN(STCP_MSS-1,MAXBUF-getSize(&ctx->current_buffer)));
