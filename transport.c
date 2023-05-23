@@ -525,7 +525,7 @@ static void recv_sumthin_from_network(mysocket_t sd, context_t *ctx){
         #if ESTABLISHED_PRINT
         std::cout << "  RECV DATA" << std::endl;
         #endif
-        
+    // this isn't inside the else b/c we need to be able to process FIN + DATA packets & ACK+DATA packets
     insertWindow(&ctx->opposite_buffer,recv_buffer); //record that data was given to us
     ctx->opposite_current_sequence_num += num_read; //record the sequence number
     send_just_header(sd,ctx,TH_ACK); //send an acknowledgement, based off the prerecorded sequence num
