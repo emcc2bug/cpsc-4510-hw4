@@ -111,10 +111,19 @@ typedef enum State {
     PASSIVE_ESTABLISHED, 
     ACTIVE_ESTABLISHED,
 
+    // map will never route to these! you have to edit ctx directly!
+    PASSIVE_PRECLOSE,
+    ACTIVE_PRECLOSE,
+
+    // active side
     FIN_WAIT_1,
-    FIN_WAIT_2,
+    FORK_CLOSE,
+
+    // passive side
     CLOSE_WAIT,
-    LAST_CALL,
+    LAST_ACK,
+
+    DONE,
 
     ERROR,
 
@@ -145,7 +154,7 @@ typedef struct
     int tcp_window_size;
 } context_t;
 
-
+static bool finsniffer(tcphdr t);
 
 static void send_syn(mysocket_t sd, context_t *ctx);
 static void recv_syn_send_synack(mysocket_t sd, context_t *ctx);
@@ -157,6 +166,9 @@ static State execute_state(context_t *ctx, int event);
 
 static void generate_initial_seq_num(context_t *ctx);
 static void control_loop(mysocket_t sd, context_t *ctx);
+
+static void maid_active(mysocket_t sd, context_t *ctx);
+static void maid_passive(mysocket_t sd, context_t *ctx);
 
 
 // this is probably broken, but it needs to be defined in the global scope
@@ -170,6 +182,8 @@ std::map<std::pair<State, State>, std::function<void(mysocket_t, context_t*)>> f
 
         //fxn associated with the establishment. 
     // idfk how to do this bit Will or Pascal yall are gonna have to handle this
+    {{ACTIVE_PRECLOSE, FORK_CLOSE}, maid_active},
+    {{PASSIVE_PRECLOSE, CLOSE_WAIT}, maid_passive}, // both of these terminate
 };
 
 /* initialise the transport layer, and start the main loop, handling
@@ -292,6 +306,7 @@ State get_next_state(context_t *ctx, int event) {
                 // this *shouldn't* change state here, it should change state in response to
                 // seeing a FIN packet. so i don't think we do anything here.
             }
+        /* all of these are horseshit because
         case FIN_WAIT_1:
             switch(event){
                 case NETWORK_DATA: return FIN_WAIT_2;
@@ -315,6 +330,7 @@ State get_next_state(context_t *ctx, int event) {
             }
         default:
             return ERROR;
+            */
     }
 }
 
@@ -470,7 +486,7 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 {
     assert(ctx);
     assert(!ctx->done);
-
+    /*
     // this needs to be fixed but i Do Not Understand it so i'm leaving it to one of
     std::map<std::pair<State, State>, std::function<void(mysocket_t, context_t*)>> fxn_map = {
 
@@ -481,7 +497,7 @@ static void control_loop(mysocket_t sd, context_t *ctx)
         {{ACCEPT, PASSIVE_ESTABLISHED}, recv_ack}, 
 
             //fxn associated with the establishment. 
-    };
+    };*/
 
     unsigned int event; 
 
@@ -521,6 +537,9 @@ static void control_loop(mysocket_t sd, context_t *ctx)
     }
 }
 
+static bool finsniffer(tcphdr* t) {
+    return t->th_flags & TH_FIN;
+}
 
 /**********************************************************************/
 /* our_dprintf
