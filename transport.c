@@ -494,22 +494,19 @@ static void recv_sumthin_from_network(mysocket_t sd, context_t *ctx){
     //reads the data into the header
     memcpy(recv_header,recv_buffer, amt_head); //copy the packet head into the struct which analyzes it
 
-    #if ESTABLISHED_PRINT
-    std::cout << "      OPPOSITE CURRENT SEQ NUMBER: " << recv_header->th_seq << std::endl;
-    //prints everything but the end of line character
-    std::cout << "      DATA: " << std::string(&recv_buffer[amt_head]).substr(0, amt_data - 2) << std::endl;
-    std::cout << "      AMT: " << amt_data << std::endl;
-    #endif
-
     //analyze struct
     if(recv_header->th_flags&TH_ACK){ //if it is an ack
 
         #if ESTABLISHED_PRINT
         std::cout << "      RECV ACK" << std::endl;
+        std::cout << "      ACK#:" << recv_header->th_ack << std::endl;
         #endif
 
+        //TODO: not sure if this works
         slideWindow(&ctx->current_buffer,recv_header->th_ack-ctx->current_sequence_num); //then record how much data has been received by the other
-        ctx->current_sequence_num=recv_header->th_ack; //and record it in the sequence num
+        
+        //no the seq_number are adjusted when stuff is sent. 
+        // ctx->current_sequence_num=recv_header->th_ack; //and record it in the sequence num
     } else if(recv_header->th_flags&TH_FIN) { //otherwise if it receives an unsolicited fin
         
         #if ESTABLISHED_PRINT
@@ -521,6 +518,10 @@ static void recv_sumthin_from_network(mysocket_t sd, context_t *ctx){
         
         #if ESTABLISHED_PRINT
         std::cout << "      RECV DATA" << std::endl;
+        std::cout << "      RECV SEQ NUMBER (MATCH OPP): " << recv_header->th_seq << std::endl;
+        //prints everything but the end of line character
+        std::cout << "      DATA: " << std::string(&recv_buffer[amt_head]).substr(0, amt_data - 2) << std::endl;
+        std::cout << "      AMT: " << amt_data << std::endl;
         #endif
         
         //TODO: PASCAL FIGURE THIS OUT
@@ -556,7 +557,7 @@ static void recv_sumthin_from_app(mysocket_t sd, context_t *ctx){
 
     #if ESTABLISHED_PRINT
     //print but no end line or carriage returns
-    std::cout << "RECV: " << std::string(recv_buffer, num_read).substr(0, num_read) << std::endl;
+    std::cout << "      RECV: " << std::string(recv_buffer, num_read).substr(0, num_read) << std::endl;
     #endif
     
     #if ESTABLISHED_PRINT
@@ -594,20 +595,22 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 
     unsigned int event; 
 
-    #if ESTABLISHED_PRINT
-    std::cout << "HANDSHAKE COMPLETE!" << std::endl;
-    std::cout << "SEQ NUM: " << ctx->current_sequence_num << std::endl;
-    std::cout << "OPP SEQ NUM: " << ctx->opposite_current_sequence_num << std::endl;
-    #endif
+    
 
     while (!ctx->done)
     {
+
+        #if ESTABLISHED_PRINT
+        // std::cout << "HANDSHAKE COMPLETE!" << std::endl;
+        std::cout << "SEQ NUM: " << ctx->current_sequence_num << std::endl;
+        std::cout << "OPP SEQ NUM: " << ctx->opposite_current_sequence_num << std::endl;
+        std::cout.flush();
+        #endif
 
         event = stcp_wait_for_event(sd, ANY_EVENT, NULL);
 
         if(event & APP_DATA){
             recv_sumthin_from_app(sd, ctx);
-            exit(1);
         } else if (event & NETWORK_DATA){
             recv_sumthin_from_network(sd, ctx);
         }
