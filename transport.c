@@ -147,6 +147,7 @@ typedef struct
     int tcp_window_size;
 
     cBuffer current_buffer;
+    cBuffer opposite_buffer;
 } context_t;
 
 
@@ -491,7 +492,7 @@ static void recv_sumthin_from_network(mysocket_t sd, context_t *ctx){
         slideWindow(&ctx->current_buffer,recv_header->th_ack-ctx->current_sequence_num); //then record how much data has been received by the other
         ctx->current_sequence_num=recv_header->th_ack; //and record it in the sequence num
     } else if((recv_header->th_flags&TH_FIN)==TH_FIN) { //otherwise if it receives an unsolicited fin
-        ctx->state=PASSIVE_PRECLOSE; /////////////////////////////////////////////////////// change for fsm, evelyn
+        // ctx->state=PASSIVE_PRECLOSE; /////////////////////////////////////////////////////// change for fsm, evelyn
     } else { //otherwise access the data part of the packet
         insertWindow(&ctx->opposite_buffer,recv_buffer); //record that data was given to us
         ctx->current_sequence_num=ctx->current_sequence_num+num_read; //record the sequence number
