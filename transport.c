@@ -160,10 +160,8 @@ typedef struct
     cBuffer current_buffer;
     cBuffer opposite_buffer;
 
-    int fin_ack // used only in close loop smiley
+    int fin_ack; // used only in close loop smiley
 } context_t;
-
-static int finsniffer(tcphdr t);
 
 static void send_syn(mysocket_t sd, context_t *ctx);
 static void recv_syn_send_synack(mysocket_t sd, context_t *ctx);
@@ -485,13 +483,8 @@ static void recv_sumthin_from_network(mysocket_t sd, context_t *ctx){
     std::cout << "RECV FROM NET" << std::endl;
     #endif
 
-    STCPHeader* recv_header = new STCPHeader(); //to store the header after we copy data in
-    char* recv_buffer = new char[sizeof(STCPHeader) + STCP_MSS]; //to receive the entire packet
-    
-    int num_read = stcp_network_recv(sd, recv_buffer, sizeof(STCPHeader) + STCP_MSS); //receive from network the entire packet]
-    
     #if ESTABLISHED_PRINT
-    std::cout << "IN BUFFER:" << recv_buffer << std::endl;
+    std::cout << "  IN BUFFER:" << recv_buffer << std::endl;
     #endif
     
     memcpy(recv_header,recv_buffer,(size_t)TCP_DATA_START(recv_buffer)); //copy the packet head into the struct which analyzes it
@@ -500,7 +493,7 @@ static void recv_sumthin_from_network(mysocket_t sd, context_t *ctx){
     std::cout << "  OPPOSITE CURRENT SEQ NUMBER: " << recv_header->th_seq << std::endl;
     std::cout << "  DATA: " << &recv_buffer[sizeof(STCPHeader)] << std::endl;
     #endif
-    ctx->fin_ack = 0
+    ctx->fin_ack = 0;
     //analyze struct
     if(recv_header->th_flags&TH_ACK){ //if it is an ack
 
@@ -615,13 +608,6 @@ static void control_loop(mysocket_t sd, context_t *ctx)
     }
 }
 
-static int finsniffer(tcphdr* t) {
-    if ((t->th_flags & TH_FIN) == TH_FIN)
-        return 1;
-    else if ((t->th_flags & TH_ACK)) == TH_ACK)
-        return 2;
-    else return 0;
-}
 
 static void maid_active(mysocket_t sd, context_t *ctx) {
     // sends a fin packet. we're not waiting for it to close because that's fin_wait_1's problem
