@@ -325,6 +325,22 @@ State get_next_state(context_t *ctx, int event) {
                 // this *shouldn't* change state here, it should change state in response to
                 // seeing a FIN packet. so i don't think we do anything here.
             }
+        case ACTIVE_PRECLOSE:
+            return FIN_WAIT_1;
+        case PASSIVE_PRECLOSE:
+            return CLOSE_WAIT;
+        case FIN_WAIT_1:
+            return FIN_WAIT_1; // irrelevant
+        case FIN_WAIT_2:
+            return DONE;
+        case CLOSING:
+            return DONE;
+        case CLOSE_WAIT:
+            return LAST_ACK;
+        case LAST_ACK:
+            return DONE;
+        case DONE:
+            return DONE;
         default:
             return ERROR;
     }
@@ -565,7 +581,7 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 
         //advance the state
         // if statement is b/c FIN_WAIT_1's function will set its own state based on the next packet it receives :)
-        if (ctx->state != FIN_WAIT_2 && ctx->state != CLOSING) ctx->state = next_state;
+        if (ctx->state != FIN_WAIT_2 && ctx->state != CLOSING && ctx->state != PASSIVE_PRECLOSE) ctx->state = next_state;
 
         // unsigned int event;
 
