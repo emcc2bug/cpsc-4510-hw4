@@ -119,7 +119,8 @@ typedef enum State {
 
     // active side
     FIN_WAIT_1,
-    FORK_CLOSE,
+    FIN_WAIT_2,
+    CLOSING,
 
     // passive side
     CLOSE_WAIT,
@@ -552,6 +553,8 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 static bool finsniffer(tcphdr* t) {
     return t->th_flags & TH_FIN;
 }
+
+static void maid_active()
 
 /**********************************************************************/
 /* our_dprintf
