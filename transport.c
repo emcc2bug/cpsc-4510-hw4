@@ -112,8 +112,8 @@ typedef enum State {
     CONNECT, 
     ACCEPT, 
 
-    ACTIVE_PRECLOSE;
-    PASSIVE_PRECLOSE;
+    ACTIVE_PRECLOSE,
+    PASSIVE_PRECLOSE,
 
     PASSIVE_ESTABLISHED, 
     ACTIVE_ESTABLISHED,
@@ -123,6 +123,8 @@ typedef enum State {
     CLOSE_WAIT,
     LAST_CALL,
 
+    CLOSING,
+    
     ERROR,
 
     //seems like these names are off limits
