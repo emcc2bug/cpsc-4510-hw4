@@ -23,14 +23,8 @@
 
 #include <map>
 #include <functional>
-#include <iostream>
 
 #define MAXBUF 3072
-#define HANDSHAKE_PRINT 1
-#define HANDSHAKE_LOOP_PRINT 1
-
-
-
 struct cBuffer{
     int start=0;
     int end=0;
@@ -139,20 +133,18 @@ typedef struct
     tcp_seq initial_sequence_num;
     tcp_seq current_sequence_num;
     tcp_seq opposite_current_sequence_num;
+    cBuffer current_buffer;
 
     /* any other connection-wide global variables go here */
     int tcp_opposite_window_size; 
     int tcp_window_size;
 } context_t;
 
-
-
 static void send_syn(mysocket_t sd, context_t *ctx);
 static void recv_syn_send_synack(mysocket_t sd, context_t *ctx);
 static void recv_synack_send_ack(mysocket_t sd, context_t *ctx);
 static void recv_ack(mysocket_t sd, context_t *ctx);
 
-static State get_next_state(context_t *ctx, int event);
 static State execute_state(context_t *ctx, int event);
 
 static void generate_initial_seq_num(context_t *ctx);
@@ -178,10 +170,6 @@ std::map<std::pair<State, State>, std::function<void(mysocket_t, context_t*)>> f
  */
 void transport_init(mysocket_t sd, bool_t is_active)
 {
-
-#if HANDSHAKE_PRINT
-    std::cout << "IN TRANSPORT_INIT" << std::endl;
-#endif
     context_t *ctx;
 
     ctx = (context_t *) calloc(1, sizeof(context_t));
@@ -201,38 +189,6 @@ void transport_init(mysocket_t sd, bool_t is_active)
         ctx->state = CLOSED;
     } else {
         ctx->state = LISTEN; 
-    }
-
-    unsigned int event = ANY_EVENT;
-
-    //do the part of the fsm for handshaking
-    while(ctx->state != PASSIVE_ESTABLISHED && ctx->state != ACTIVE_ESTABLISHED){
-        
-#if HANDSHAKE_LOOP_PRINT
-    std::cout << "IN HANDSHAKE LOOP" << std::endl;
-#endif
-        //bc listen and closed are the start
-        //don't need to wait, might wanna fix this.
-        if(ctx->state != LISTEN && ctx->state != CLOSED)
-            event = stcp_wait_for_event(sd, 0, NULL);
-
-#if HANDSHAKE_LOOP_PRINT
-    std::cout << "EVENT IS" << event << std::endl;
-#endif
-
-        State next_state = get_next_state(ctx, event);
-
-        if(next_state == ERROR){
-
-            //not sure exactly what should be done here
-            exit(1);
-        } 
-
-        //execute the event; 
-        fxn_map[{ctx->state, next_state}](sd, ctx);
-
-        //advance the state
-        ctx->state = next_state;
     }
 
     if (ctx->state != ERROR) {
@@ -273,7 +229,8 @@ State get_next_state(context_t *ctx, int event) {
         case CLOSED:
             switch(event){
                 // should be refused on connection & aborted on accept, otherwise idfk how this would fail
-                default: return CONNECT; 
+                case APP_DATA: return CONNECT; 
+                default: return ERROR_REFUSED; 
             }
             break;
         case LISTEN:
@@ -331,12 +288,40 @@ State get_next_state(context_t *ctx, int event) {
     }
 }
 
-static void send_syn(mysocket_t sd, context_t *ctx){
+static void send_just_header(mysocket_t sd, context_t *ctx, uint8_t current_flags){
+    STCPHeader* send_header = new STCPHeader();
+    memset(send_header, 0, sizeof(*send_header));
+    send_header->th_seq=ctx->current_sequence_num;
+    send_header->th_win=getSize(&ctx->current_buffer);
+    send_header->th_flags=current_flags;
+    delete send_header;
+    stcp_network_send(sd,send_header,sizeof(*send_header));
+}
 
-#if HANDSHAKE_PRINT
+static void recv_just_header(mysocket sd, context_t *ctx, uint_t current_flags){
+    STCPHeader* recv_head = new STCPHeader();
+    memset(recv_header, 0, sizeof(*recv_header));
+    stcp_app_recv(sd, recv_header, sizeof(*recv_header));
+    if((recv_header->th_flags & current_flags) != current_flags){
+        // error handling?
+        ctx->state = ERROR;
+        return;
+    }
+    ctx->tcp_opposite_window_size = recv_header->th_win; 
+    ctx->opposite_current_sequence_num = recv_header->th_seq;
+
+
+}
+
+static void send_syn(mysocket_t sd, context_t *ctx){
+    #if HANDSHAKE_PRINT
     std::cout << "SEND SYN" << std::endl;
-#endif
-    
+    #endif
+
+    generate_initial_seq_num(ctx);
+    send_just_header(sd,ctx,TH_SYN);
+
+    /*
     STCPHeader* send_header = new STCPHeader();
 
     memset(send_header, 0, sizeof(*send_header));
@@ -353,15 +338,19 @@ static void send_syn(mysocket_t sd, context_t *ctx){
     ctx->current_sequence_num = send_header->th_seq;
 
     delete send_header;
+    */
 
 }
 
 static void recv_syn_send_synack(mysocket_t sd, context_t *ctx){
-
-#if HANDSHAKE_PRINT
+    #if HANDSHAKE_PRINT
     std::cout << "RECV SYN SEND SYNACK" << std::endl;
-#endif
+    #endif
+    generate_initial_seq_num(ctx);
+    recv_just_header(sd,ctx,TH_SYN);
+    send_just_header(sd,ctx,TH_SYN|TH_ACK);
 
+    /*
     STCPHeader* recv_header = new STCPHeader();
     STCPHeader* send_header = new STCPHeader();
 
@@ -388,15 +377,14 @@ static void recv_syn_send_synack(mysocket_t sd, context_t *ctx){
     send_header->th_flags |= TH_ACK;
 
     stcp_network_send(sd, send_header, sizeof(*send_header));
-    
+    */
 }
 
 static void recv_synack_send_ack(mysocket_t sd, context_t *ctx){
-    
-#if HANDSHAKE_PRINT
+    #if HANDSHAKE_PRINT
     std::cout << "RECV SYNACK SEND ACK" << std::endl;
-#endif
-
+    #endif
+    
     STCPHeader* recv_header = new STCPHeader();
     STCPHeader* send_header = new STCPHeader();
 
@@ -416,10 +404,9 @@ static void recv_synack_send_ack(mysocket_t sd, context_t *ctx){
     }
 }
 static void recv_ack(mysocket_t sd, context_t *ctx){
-
-#if HANDSHAKE_PRINT
+    #if HANDSHAKE_PRINT
     std::cout << "RECV ACK" << std::endl;
-#endif
+    #endif
 
     STCPHeader* recv_header = new STCPHeader();
 
@@ -527,5 +514,4 @@ void our_dprintf(const char *format,...)
     fputs(buffer, stdout);
     fflush(stdout);
 }
-
 
