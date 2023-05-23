@@ -1,20 +1,6 @@
 ================================================
  README file for Project 3 - Simple TCP
-           Name(s): Will McCormick, Pascal Stephens, Evelyn McCarty
+           Name(s): 
 ================================================
 
-Contributions:
-
-Will: handshake protocol, initial FSM planning, established loop, 
-Pascal: buffer code, established loop, 
-Evelyn: closing protocols, expansion of map, readme
-
-We make heavy use of switch cases & function maps to handle functioning - essentially, operating like a FSM would, and just implementing STCP based off the TCP FSM (obviously without certain components that a TCP FSM would need to be fully implemented). We rely heavily on our states outside the established loop for aforementioned reasons - we wanted to just implement the FSM, and making sure we knew what context state we were in was deemed very important. 
-
-While we use a map for most of our code, we don't use one for the established connection loop, because it would add meaningless overhead. However, it's helpful for establishing our handshake & closing our connection, so we opted to utilize it there. 
-
-We use a very basic sliding window buffer because we didn't think something beyond that was necessary. if we still have data in the buffer *after* we fill our window up, we can just call wait_for_event (and therefore stcp_app_recv) again, and load up more data into our buffer. if our window's full, obviously there are bigger problems than our window code being the way it is.
-
-Additionally, you have to modify the makefile's CFLAGS with `-std=c++11` or the code won't compile.
-
-Note: as of currently, we commented out the checksum because it was throwing an error in the assert(). 
+DESCRIBE YOUR CODE AND DESIGN DECISIONS HERE
