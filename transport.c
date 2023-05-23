@@ -500,7 +500,7 @@ static void recv_sumthin_from_network(mysocket_t sd, context_t *ctx){
     std::cout << "  OPPOSITE CURRENT SEQ NUMBER: " << recv_header->th_seq << std::endl;
     std::cout << "  DATA: " << &recv_buffer[sizeof(STCPHeader)] << std::endl;
     #endif
-
+    ctx->fin_ack = 0
     //analyze struct
     if(recv_header->th_flags&TH_ACK){ //if it is an ack
 
