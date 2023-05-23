@@ -475,35 +475,6 @@ static void recv_ack(mysocket_t sd, context_t *ctx){
 //     slideWindow(&ctx->opposite_buffer,num_read);
 // }
 
-static void recv_sumthin_from_network(mysocket_t sd, context_t *ctx){
-
-    #if ESTABLISHED_PRINT
-    std::cout << "RECV FROM NET" << std::endl;
-    #endif
-
-    char recv_buffer[MAXBUF]; //temp buffer
-
-    //TODO: needs to be remaining buffer
-    ssize_t num_read = stcp_network_recv(sd, (void*)&recv_buffer, sizeof(recv_buffer));
-
-    //null terminating
-    recv_buffer[num_read] = '\0';
-
-    //memcpy for ring buffer
-    insertWindow(&ctx->opposite_buffer,recv_buffer);
-
-    //now the next byte to be recved, currently needs to be acked
-    ctx->opposite_current_sequence_num += num_read;
-
-    //ack that we received
-    send_just_header(sd,ctx,TH_ACK);
-
-    //send the data to the app
-    stcp_app_send(sd,recv_buffer,num_read);
-
-    //move the ring buffer to receive new data
-    slideWindow(&ctx->opposite_buffer,num_read);
-}
 
 static void recv_sumthin_from_network(mysocket_t sd, context_t *ctx){
     STCPHeader * recv_header = new STCPHeader(); //to store the header after we copy data in
