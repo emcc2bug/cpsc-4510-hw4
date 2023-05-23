@@ -298,10 +298,10 @@ static void send_just_header(mysocket_t sd, context_t *ctx, uint8_t current_flag
     stcp_network_send(sd,send_header,sizeof(*send_header));
 }
 
-static void recv_just_header(mysocket sd, context_t *ctx, uint_t current_flags){
-    STCPHeader* recv_head = new STCPHeader();
+static void recv_just_header(mysocket_t sd, context_t *ctx, uint8_t current_flags){
+    STCPHeader* recv_header = new STCPHeader();
     memset(recv_header, 0, sizeof(*recv_header));
-    stcp_app_recv(sd, recv_header, sizeof(*recv_header));
+    stcp_network_recv(sd, recv_header, sizeof(*recv_header));
     if((recv_header->th_flags & current_flags) != current_flags){
         // error handling?
         ctx->state = ERROR;
@@ -309,7 +309,6 @@ static void recv_just_header(mysocket sd, context_t *ctx, uint_t current_flags){
     }
     ctx->tcp_opposite_window_size = recv_header->th_win; 
     ctx->opposite_current_sequence_num = recv_header->th_seq;
-
 
 }
 
@@ -384,7 +383,10 @@ static void recv_synack_send_ack(mysocket_t sd, context_t *ctx){
     #if HANDSHAKE_PRINT
     std::cout << "RECV SYNACK SEND ACK" << std::endl;
     #endif
+    recv_just_header(sd,ctx,TH_SYN|TH_SYN);
+    send_just_header(sd,ctx,TH_ACK);
     
+    /*
     STCPHeader* recv_header = new STCPHeader();
     STCPHeader* send_header = new STCPHeader();
 
@@ -402,6 +404,7 @@ static void recv_synack_send_ack(mysocket_t sd, context_t *ctx){
         ctx->state = ERROR;
         perror("error in synack");
     }
+    */
 }
 static void recv_ack(mysocket_t sd, context_t *ctx){
     #if HANDSHAKE_PRINT
@@ -514,4 +517,5 @@ void our_dprintf(const char *format,...)
     fputs(buffer, stdout);
     fflush(stdout);
 }
+
 
