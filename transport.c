@@ -472,6 +472,46 @@ static void recv_ack(mysocket_t sd, context_t *ctx){
     }
 }
 
+static void recv_data_from_network(mysocket_t sd,context_t *ctx){
+    char recv_buffer[MAXBUF];
+    ssize_t num_read = stcp_network_recv(sd, (void*)recv_buffer,MAXBUF);
+    recv_buffer[num_read]=(char)0;
+    insertWindow(&ctx->opposite_buffer,recv_buffer);
+    ctx->current_sequence_num=ctx->current_sequence_num+num_read;
+    send_just_header(sd,ctx,TH_ACK);
+    stcp_app_send(sd,recv_buffer,num_read);
+    slideWindow(&ctx->opposite_buffer,num_read);
+}
+
+static void recv_sumthin_from_network(mysocket_t sd, context_t *ctx){
+    STCPHeader * recv_header = new STCPHeader();
+    char * recv_buffer = new [STCP_MSS+sizeof(STCPHeader)];
+    stcp_network_recv(sd,recv_buffer, sizeof(recv_buffer));
+    memcpy(recv_header,recv_buffer,STCP_MSS+sizeof(STCPHeader));
+
+    if((recv_header->th_flags&TH_ACK)==TH_ACK){
+        slideWindow(&ctx->current_buffer,recv_header->th_ack-ctx->current_sequence_num);
+    } else if((recv_header->th_flags&TH_FIN)==TH_FIN) {
+        ctx->state=PASSIVE_PRECLOSE; /////////////////////////////////////////////////////// change for fsm, evelyn
+    } else {
+        recv_data_from_network(sd,ctx);
+    }
+    delete recv_header;
+}
+
+static void recv_sumthin_from_app(mysocket_t sd, context_t *ctx){
+    char recv_buffer[STCP_MSS];
+    size_t num_read=stcp_app_recv(sd,recv_buffer,STCP_MSS);
+    recv_buffer[num_read]=(char)0;
+    insertWindow(&ctx->current_buffer,recv_buffer);
+    STCPHeader * send_header = new STCPHeader();
+    memset(send_header, 0, sizeof(*send_header));
+    ctx->current_sequence_num=ctx->current_sequence_num+num_read;
+    send_header->th_seq=ctx->current_sequence_num;
+    send_header->th_off=5;
+    send_header->th_win=(uint16_t) getSize(&ctx->receive_buffer);
+    stcp_network_send(sd,send_header,sizeof(send_header),recv_buffer,num_read,NULL);
+}
 
 
 /* control_loop() is the main STCP loop; it repeatedly waits for one of the
