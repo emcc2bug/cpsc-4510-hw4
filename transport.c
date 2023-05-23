@@ -360,7 +360,7 @@ static void send_just_header(mysocket_t sd, context_t *ctx, uint8_t current_flag
         #endif
     }
 
-    send_header->th_win=getSize(&ctx->current_buffer);
+    send_header->th_win=MAXBUF-getSize(&ctx->current_buffer);
     send_header->th_flags=current_flags;
     send_header->th_off = 5; 
 
@@ -482,7 +482,7 @@ static void recv_sumthin_from_network(mysocket_t sd, context_t *ctx){
         //then record how much data has been received by the other
         slideWindow(&ctx->current_buffer,recv_header->th_ack-ctx->current_sequence_num);
         //and record it in the sequence num
-        
+        ctx->tcp_opposite_window_size+=recv_header->th_ack-ctx->current_sequence_num;
         //no the seq_number are adjusted when stuff is sent. 
         // ctx->current_sequence_num=recv_header->th_ack;
 
@@ -530,9 +530,17 @@ static void recv_sumthin_from_app(mysocket_t sd, context_t *ctx){
     //NEED TO CHECK THE RECV HAS ENOUGH ROOM IN BUFFER
 
     char* recv_buffer = new char[STCP_MSS]; //temp recv buffer
-
+    memset(recv_buffer,'\0',STCP_MSS);
+    
     //receive the data from the app
-    size_t num_read = stcp_app_recv(sd, (void*)recv_buffer, STCP_MSS);
+    //size_t num_read = stcp_app_recv(sd, (void*)recv_buffer, STCP_MSS);
+    size_t num_read = stcp_app_recv(sd, (void*)recv_buffer, MIN(MIN(STCP_MSS-1,MAXBUF-getSize(&ctx->current_buffer)),ctx->tcp_opposite_window_size));
+
+    //put it in the buffer to be tracked
+    insertWindow(&ctx->current_buffer,recv_buffer); 
+
+    //make sure the window size is tracked too, otherwise we could potentially send more data than the app can hold
+    ctx->tcp_opposite_window_size-=num_read;
 
     #if ESTABLISHED_PRINT
     //print but no end line or carriage returns
@@ -546,7 +554,7 @@ static void recv_sumthin_from_app(mysocket_t sd, context_t *ctx){
     STCPHeader* send_header = new STCPHeader();
     memset(send_header, 0, sizeof(STCPHeader));
 
-    send_header->th_win = (uint16_t) getSize(&ctx->current_buffer);
+    send_header->th_win = (uint16_t) MAXBUF-getSize(&ctx->current_buffer);
     send_header->th_flags = 0;
     send_header->th_seq=ctx->current_sequence_num;
     send_header->th_off = 5; 
@@ -667,5 +675,4 @@ void our_dprintf(const char *format,...)
     fputs(buffer, stdout);
     fflush(stdout);
 }
-
 
