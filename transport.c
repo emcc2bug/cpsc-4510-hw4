@@ -262,13 +262,6 @@ void transport_init(mysocket_t sd, bool_t is_active)
         stcp_unblock_application(sd);
         control_loop(sd, ctx);
     }
-    else { // maybe idk
-
-        //can't return from a void silly goose
-
-        // if (is_active) return ECONNREFUSED;
-        // else return ECONNABORTED;
-    }
 
     /* do any cleanup here */
     free(ctx);
@@ -314,7 +307,7 @@ State get_next_state(context_t *ctx, int event) {
                 default: return PASSIVE_ESTABLISHED;
             }
 
-        // this shit is probably not good but this is how i *think* we're meant to do it
+        // this is probably not good but this is how i *think* we're meant to do it
         case ACTIVE_ESTABLISHED:
             switch(event){
                 case APP_CLOSE_REQUESTED: return FIN_WAIT_1;
@@ -322,10 +315,11 @@ State get_next_state(context_t *ctx, int event) {
             }
         case PASSIVE_ESTABLISHED:
             switch(event){
+                case APP_CLOSE_REQUESTED: return ACTIVE_PRECLOSE;
                 default: return PASSIVE_ESTABLISHED;
                 // this *shouldn't* change state here, it should change state in response to
                 // seeing a FIN packet. so i don't think we do anything here.
-            }
+            }        
         case ACTIVE_PRECLOSE:
             return FIN_WAIT_1;
         case PASSIVE_PRECLOSE:
@@ -491,22 +485,25 @@ static void recv_sumthin_from_network(mysocket_t sd, context_t *ctx){
     int num_read = stcp_network_recv(sd,recv_buffer, sizeof(recv_buffer)); //receive from network the entire packet
     memcpy(recv_header,recv_buffer,TCP_DATA_START(recv_buffer)); //copy the packet head into the struct which analyzes it
 
+    ctx->fin_ack = 0;
     //analyze struct
     if((recv_header->th_flags&TH_ACK)==TH_ACK){ //if it is an ack
+        ctx->fin_ack = 2;
         slideWindow(&ctx->current_buffer,recv_header->th_ack-ctx->current_sequence_num); //then record how much data has been received by the other
         ctx->current_sequence_num=recv_header->th_ack; //and record it in the sequence num
     } else if((recv_header->th_flags&TH_FIN)==TH_FIN) { //otherwise if it receives an unsolicited fin
-        // ctx->state=PASSIVE_PRECLOSE; /////////////////////////////////////////////////////// change for fsm, evelyn
-    } else { //otherwise access the data part of the packet
-        insertWindow(&ctx->opposite_buffer,recv_buffer); //record that data was given to us
-        ctx->current_sequence_num=ctx->current_sequence_num+num_read; //record the sequence number
-        send_just_header(sd,ctx,TH_ACK); //send an acknowledgement, based off the prerecorded sequence num
-        stcp_app_send(sd,recv_buffer,num_read); //send the data up
-        slideWindow(&ctx->opposite_buffer,num_read); //record that data was sent up
-    }
+        ctx->fin_ack = 1;
+        stcp_fin_received(sd);
+        ctx->state = PASSIVE_PRECLOSE;
+    } 
+    insertWindow(&ctx->opposite_buffer,recv_buffer); //record that data was given to us
+    ctx->current_sequence_num=ctx->current_sequence_num+num_read; //record the sequence number
+    send_just_header(sd,ctx,TH_ACK); //send an acknowledgement, based off the prerecorded sequence num
+    stcp_app_send(sd,recv_buffer,num_read); //send the data up
+    slideWindow(&ctx->opposite_buffer,num_read); //record that data was sent up
     delete recv_header;
 }
-// ^^^^^^ passive_preclose should ack the fin that way it's simpler later on :))))
+
 static void recv_sumthin_from_app(mysocket_t sd, context_t *ctx){
     
     #if ESTABLISHED_PRINT
@@ -559,7 +556,9 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 
     unsigned int event; 
 
-    while (!ctx->done)
+
+    // ESTABLISHED state
+    while (ctx->state == PASSIVE_ESTABLISHED || ctx->state == ACTIVE_ESTABLISHED)
     {
 
         event = stcp_wait_for_event(sd, ANY_EVENT, NULL);
@@ -568,26 +567,20 @@ static void control_loop(mysocket_t sd, context_t *ctx)
             recv_sumthin_from_app(sd, ctx);
         } else if (event & NETWORK_DATA){
             recv_sumthin_from_network(sd, ctx);
+        } else if (event & APP_CLOSE_REQUESTED) {
+            ctx->state = ACTIVE_PRECLOSE;
         }
+    }
+    while (!ctx->done) {
+        event = stcp_wait_for_event(sd, ANY_EVENT, NULL);
+        State next_state = get_next_state(ctx, event);
+        
+        //execute the event; 
+        fxn_map[{ctx->state, next_state}](sd, ctx);
 
-        // } else (event & APP_CLOSE_REQUESTED){
-        //     //evelyn's job
-        // }
-
-        // unsigned int event;
-
-        // /* see stcp_api.h or stcp_api.c for details of this function */
-        // /* XXX: you will need to change some of these arguments! */
-        // event = stcp_wait_for_event(sd, 0, NULL);
-
-        // /* check whether it was the network, app, or a close request */
-        // if (event & APP_DATA)
-        // {
-        //     /* the application has requested that data be sent */
-        //     /* see stcp_app_recv() */
-        // }
-
-        // /* etc. */
+        //advance the state
+        // if statement is b/c FIN_WAIT_1's function will set its own state based on the next packet it receives :)
+        if (ctx->state != FIN_WAIT_2 && ctx->state != CLOSING && ctx->state != PASSIVE_PRECLOSE) ctx->state = next_state;
     }
 }
 
@@ -605,7 +598,6 @@ static void maid_active(mysocket_t sd, context_t *ctx) {
 }
 static void maid_passive(mysocket_t sd, context_t *ctx) {
     // send EOF
-    stcp_fin_received(sd);
     send_just_header(sd, ctx, TH_FIN);
 }
 
