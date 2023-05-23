@@ -348,7 +348,7 @@ static void send_just_header(mysocket_t sd, context_t *ctx, uint8_t current_flag
 
     //if ACK you send the next bit of data you expect to recv
     if(current_flags & TH_ACK){
-        send_header->th_ack = ctx->opposite_current_sequence_num + 1;
+        send_header->th_ack = ctx->opposite_current_sequence_num;
         
         #if HANDSHAKE_PRINT
         std::cout << "      INIT ACK#: " << send_header->th_ack << std::endl;
@@ -410,8 +410,7 @@ static void recv_just_header(mysocket_t sd, context_t *ctx, uint8_t current_flag
         }
     }
     
-    ctx->tcp_opposite_window_size = recv_header->th_win; 
-    ctx->opposite_current_sequence_num = recv_header->th_seq;
+    ctx->tcp_opposite_window_size = recv_header->th_win;
 
     delete recv_header;
 }
@@ -422,16 +421,29 @@ static void send_syn(mysocket_t sd, context_t *ctx){
 
 static void recv_syn_send_synack(mysocket_t sd, context_t *ctx){
     recv_just_header(sd,ctx,TH_SYN);
+
+    //increment when you recv the syn
+    ctx->opposite_current_sequence_num++;
+
     send_just_header(sd,ctx,TH_SYN|TH_ACK);
+
+    
 }
 
 static void recv_synack_send_ack(mysocket_t sd, context_t *ctx){
     recv_just_header(sd,ctx,TH_SYN|TH_ACK);
+
+    //increment when you recv the syn
+    ctx->opposite_current_sequence_num++;
+    //increment when you recv the ack
     ctx->current_sequence_num++;
+    
     send_just_header(sd,ctx,TH_ACK);
 }
 static void recv_ack(mysocket_t sd, context_t *ctx){
     recv_just_header(sd,ctx,TH_ACK);
+
+    //increment when you recv the ack
     ctx->current_sequence_num++;
 }
 
@@ -484,14 +496,16 @@ static void recv_sumthin_from_network(mysocket_t sd, context_t *ctx){
 
     #if ESTABLISHED_PRINT
     std::cout << "      OPPOSITE CURRENT SEQ NUMBER: " << recv_header->th_seq << std::endl;
-    std::cout << "      DATA: " << std::string(recv_buffer).substr(amt_head, amt_head + amt_data) << std::endl;
+    //prints everything but the end of line character
+    std::cout << "      DATA: " << std::string(&recv_buffer[amt_head]).substr(0, amt_data - 2) << std::endl;
+    std::cout << "      AMT: " << amt_data << std::endl;
     #endif
 
     //analyze struct
     if(recv_header->th_flags&TH_ACK){ //if it is an ack
 
         #if ESTABLISHED_PRINT
-        std::cout << "RECV ACK" << std::endl;
+        std::cout << "      RECV ACK" << std::endl;
         #endif
 
         slideWindow(&ctx->current_buffer,recv_header->th_ack-ctx->current_sequence_num); //then record how much data has been received by the other
@@ -499,20 +513,29 @@ static void recv_sumthin_from_network(mysocket_t sd, context_t *ctx){
     } else if(recv_header->th_flags&TH_FIN) { //otherwise if it receives an unsolicited fin
         
         #if ESTABLISHED_PRINT
-        std::cout << "RECV FIN" << std::endl;
+        std::cout << "      RECV FIN" << std::endl;
         #endif
         
         // ctx->state=PASSIVE_PRECLOSE; /////////////////////////////////////////////////////// change for fsm, evelyn
     } else { //otherwise access the data part of the packet
         
         #if ESTABLISHED_PRINT
-        std::cout << "  RECV DATA" << std::endl;
+        std::cout << "      RECV DATA" << std::endl;
         #endif
         
+        //TODO: PASCAL FIGURE THIS OUT
         insertWindow(&ctx->opposite_buffer,recv_buffer); //record that data was given to us
-        ctx->opposite_current_sequence_num += num_read; //record the sequence number
-        send_just_header(sd,ctx,TH_ACK); //send an acknowledgement, based off the prerecorded sequence num
-        stcp_app_send(sd,recv_buffer,num_read); //send the data up
+        
+        //increments the opposite sequence number for the ack
+        ctx->opposite_current_sequence_num += amt_data; //record the sequence number
+        
+        //send an ack
+        send_just_header(sd,ctx,TH_ACK); 
+
+        //send the data to client
+        stcp_app_send(sd, &recv_buffer[amt_head], amt_data); 
+
+        //TODO: PASCAL FIGURE THIS OUT
         slideWindow(&ctx->opposite_buffer,num_read); //record that data was sent up
     }
     delete recv_header;
@@ -570,6 +593,12 @@ static void control_loop(mysocket_t sd, context_t *ctx)
     assert(!ctx->done);
 
     unsigned int event; 
+
+    #if ESTABLISHED_PRINT
+    std::cout << "HANDSHAKE COMPLETE!" << std::endl;
+    std::cout << "SEQ NUM: " << ctx->current_sequence_num << std::endl;
+    std::cout << "OPP SEQ NUM: " << ctx->opposite_current_sequence_num << std::endl;
+    #endif
 
     while (!ctx->done)
     {
