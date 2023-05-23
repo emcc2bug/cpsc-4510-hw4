@@ -486,17 +486,24 @@ static void recv_data_from_network(mysocket_t sd,context_t *ctx){
 }
 
 static void recv_sumthin_from_network(mysocket_t sd, context_t *ctx){
-    STCPHeader * recv_header = new STCPHeader();
-    char * recv_buffer = new [STCP_MSS+sizeof(STCPHeader)];
-    stcp_network_recv(sd,recv_buffer, sizeof(recv_buffer));
-    memcpy(recv_header,recv_buffer,STCP_MSS+sizeof(STCPHeader));
+    STCPHeader * recv_header = new STCPHeader(); //to store the header after we copy data in
+    char * recv_buffer = new [STCP_MSS+sizeof(STCPHeader)]; //to receive the entire packet
+    stcp_network_recv(sd,recv_buffer, sizeof(recv_buffer)); //receive from network the entire packet
+    memcpy(recv_header,recv_buffer,TCP_DATA_START(recv_buffer)); //copy the packet head into the struct which analyzes it
 
-    if((recv_header->th_flags&TH_ACK)==TH_ACK){
-        slideWindow(&ctx->current_buffer,recv_header->th_ack-ctx->current_sequence_num);
-    } else if((recv_header->th_flags&TH_FIN)==TH_FIN) {
+    //analyze struct
+    if((recv_header->th_flags&TH_ACK)==TH_ACK){ //if it is an ack
+        slideWindow(&ctx->current_buffer,recv_header->th_ack-ctx->current_sequence_num); //then record how much data has been received by the other
+        ctx->current_sequence_number=recv_header->th_ack; //and record it in the sequence num
+
+    } else if((recv_header->th_flags&TH_FIN)==TH_FIN) { //otherwise if it receives an unsolicited fin
         ctx->state=PASSIVE_PRECLOSE; /////////////////////////////////////////////////////// change for fsm, evelyn
-    } else {
-        recv_data_from_network(sd,ctx);
+    } else { //otherwise access the data part of the packet
+        insertWindow(&ctx->opposite_buffer,recv_buffer); //record that data was given to us
+        ctx->current_sequence_num=ctx->current_sequence_num+num_read; //record the sequence number
+        send_just_header(sd,ctx,TH_ACK); //send an acknowledgement, based off the prerecorded sequence num
+        stcp_app_send(sd,recv_buffer,num_read); //send the data up
+        slideWindow(&ctx->opposite_buffer,num_read); //record that data was sent up
     }
     delete recv_header;
 }
