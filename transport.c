@@ -447,7 +447,35 @@ static void recv_ack(mysocket_t sd, context_t *ctx){
     recv_just_header(sd,ctx,TH_ACK);
 }
 
-static void recv_data_from_network(mysocket_t sd,context_t *ctx){
+// static void recv_data_from_network(mysocket_t sd,context_t *ctx){
+
+
+
+//     char recv_buffer[MAXBUF]; //temp buffer
+
+//     //TODO: needs to be remaining buffer
+//     ssize_t num_read = stcp_network_recv(sd, (void*)&recv_buffer, sizeof(recv_buffer));
+
+//     //null terminating
+//     recv_buffer[num_read] = '\0';
+
+//     //memcpy for ring buffer
+//     insertWindow(&ctx->opposite_buffer,recv_buffer);
+
+//     //now the next byte to be recved, currently needs to be acked
+//     ctx->opposite_current_sequence_num += num_read;
+
+//     //ack that we received
+//     send_just_header(sd,ctx,TH_ACK);
+
+//     //send the data to the app
+//     stcp_app_send(sd,recv_buffer,num_read);
+
+//     //move the ring buffer to receive new data
+//     slideWindow(&ctx->opposite_buffer,num_read);
+// }
+
+static void recv_sumthin_from_network(mysocket_t sd, context_t *ctx){
 
     #if ESTABLISHED_PRINT
     std::cout << "RECV FROM NET" << std::endl;
@@ -485,17 +513,32 @@ static void recv_sumthin_from_network(mysocket_t sd, context_t *ctx){
 
     ctx->fin_ack = 0;
     //analyze struct
-    if((recv_header->th_flags&TH_ACK)==TH_ACK){ //if it is an ack
+    if(recv_header->th_flags&TH_ACK){ //if it is an ack
+
+        #if ESTABLISHED_PRINT
+        std::cout << "RECV ACK" << std::endl;
+        #endif
+
         ctx->fin_ack = 2;
         slideWindow(&ctx->current_buffer,recv_header->th_ack-ctx->current_sequence_num); //then record how much data has been received by the other
         ctx->current_sequence_num=recv_header->th_ack; //and record it in the sequence num
     } else if((recv_header->th_flags&TH_FIN)==TH_FIN) { //otherwise if it receives an unsolicited fin
+        
+        #if ESTABLISHED_PRINT
+        std::cout << "RECV FIN" << std::endl;
+        #endif
+        
         ctx->fin_ack = 1;
         stcp_fin_received(sd);
         ctx->state = PASSIVE_PRECLOSE;
     } 
+        
+        #if ESTABLISHED_PRINT
+        std::cout << "RECV DATA" << std::endl;
+        #endif
+        
     insertWindow(&ctx->opposite_buffer,recv_buffer); //record that data was given to us
-    ctx->current_sequence_num=ctx->current_sequence_num+num_read; //record the sequence number
+    ctx->opposite_current_sequence_num += num_read; //record the sequence number
     send_just_header(sd,ctx,TH_ACK); //send an acknowledgement, based off the prerecorded sequence num
     stcp_app_send(sd,recv_buffer,num_read); //send the data up
     slideWindow(&ctx->opposite_buffer,num_read); //record that data was sent up
@@ -512,6 +555,11 @@ static void recv_sumthin_from_app(mysocket_t sd, context_t *ctx){
 
     //receive the data from the app
     size_t num_read = stcp_app_recv(sd,recv_buffer,STCP_MSS);
+    recv_buffer[num_read] = '\0';
+
+    #if ESTABLISHED_PRINT
+    std::cout << "      RECV: " << recv_buffer << std::endl;
+    #endif
 
     //null terminate
     recv_buffer[num_read] = '\0';
