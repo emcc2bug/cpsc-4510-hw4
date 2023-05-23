@@ -157,6 +157,7 @@ typedef struct
     int tcp_window_size;
 
     cBuffer current_buffer;
+    cBuffer opposite_buffer;
 
     int fin_ack // used only in close loop smiley
 } context_t;
@@ -487,17 +488,16 @@ static void recv_data_from_network(mysocket_t sd,context_t *ctx){
 
 static void recv_sumthin_from_network(mysocket_t sd, context_t *ctx){
     STCPHeader * recv_header = new STCPHeader(); //to store the header after we copy data in
-    char * recv_buffer = new [STCP_MSS+sizeof(STCPHeader)]; //to receive the entire packet
-    stcp_network_recv(sd,recv_buffer, sizeof(recv_buffer)); //receive from network the entire packet
+    char * recv_buffer = new char[sizeof(STCPHeader)]; //to receive the entire packet
+    int num_read = stcp_network_recv(sd,recv_buffer, sizeof(recv_buffer)); //receive from network the entire packet
     memcpy(recv_header,recv_buffer,TCP_DATA_START(recv_buffer)); //copy the packet head into the struct which analyzes it
 
     //analyze struct
     if((recv_header->th_flags&TH_ACK)==TH_ACK){ //if it is an ack
         slideWindow(&ctx->current_buffer,recv_header->th_ack-ctx->current_sequence_num); //then record how much data has been received by the other
-        ctx->current_sequence_number=recv_header->th_ack; //and record it in the sequence num
-
+        ctx->current_sequence_num=recv_header->th_ack; //and record it in the sequence num
     } else if((recv_header->th_flags&TH_FIN)==TH_FIN) { //otherwise if it receives an unsolicited fin
-        ctx->state=PASSIVE_PRECLOSE; /////////////////////////////////////////////////////// change for fsm, evelyn
+        // ctx->state=PASSIVE_PRECLOSE; /////////////////////////////////////////////////////// change for fsm, evelyn
     } else { //otherwise access the data part of the packet
         insertWindow(&ctx->opposite_buffer,recv_buffer); //record that data was given to us
         ctx->current_sequence_num=ctx->current_sequence_num+num_read; //record the sequence number
@@ -511,14 +511,14 @@ static void recv_sumthin_from_network(mysocket_t sd, context_t *ctx){
 static void recv_sumthin_from_app(mysocket_t sd, context_t *ctx){
     char recv_buffer[STCP_MSS];
     size_t num_read=stcp_app_recv(sd,recv_buffer,STCP_MSS);
-    recv_buffer[num_read]=(char)0;
+    recv_buffer[num_read]='\0';
     insertWindow(&ctx->current_buffer,recv_buffer);
     STCPHeader * send_header = new STCPHeader();
     memset(send_header, 0, sizeof(*send_header));
     ctx->current_sequence_num=ctx->current_sequence_num+num_read;
     send_header->th_seq=ctx->current_sequence_num;
     send_header->th_off=5;
-    send_header->th_win=(uint16_t) getSize(&ctx->receive_buffer);
+    send_header->th_win=(uint16_t) getSize(&ctx->current_buffer);
     stcp_network_send(sd,send_header,sizeof(send_header),recv_buffer,num_read,NULL);
 }
 
@@ -559,7 +559,6 @@ static void control_loop(mysocket_t sd, context_t *ctx)
             //not sure exactly what should be done here
             exit(1);
         } 
-
         
         //execute the event; 
         fxn_map[{ctx->state, next_state}](sd, ctx);
