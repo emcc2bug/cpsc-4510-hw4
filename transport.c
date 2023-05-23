@@ -464,10 +464,10 @@ static void recv_sumthin_from_network(mysocket_t sd, context_t *ctx){
 
     //reads the data into the header
     memcpy(recv_header,recv_buffer, amt_head); //copy the packet head into the struct which analyzes it
-
+    ctx->fin_ack = 2;
     //analyze struct
     if(recv_header->th_flags&TH_ACK) { 
-
+        ctx->fin_ack = 1;
         #if ESTABLISHED_PRINT
         std::cout << "      RECV ACK" << std::endl;
         std::cout << "      ACK#:" << recv_header->th_ack << std::endl;
@@ -482,7 +482,7 @@ static void recv_sumthin_from_network(mysocket_t sd, context_t *ctx){
         // ctx->current_sequence_num=recv_header->th_ack;
 
     } else if(recv_header->th_flags&TH_FIN) { 
-        
+        ctx->fin_ack = 1;
         #if ESTABLISHED_PRINT
         std::cout << "      RECV FIN" << std::endl;
         #endif
