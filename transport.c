@@ -175,6 +175,9 @@ static void control_loop(mysocket_t sd, context_t *ctx);
 static void maid_active(mysocket_t sd, context_t *ctx);
 static void maid_passive(mysocket_t sd, context_t *ctx);
 
+static void close_fork(mysocket_t sd, context_t *ctx);
+static void wait_fin(mysocket_t sd, context_t *ctx);
+static void wait_ackfin(mysocket_t sd, context_t *ctx);
 
 // this is probably broken, but it needs to be defined in the global scope
 std::map<std::pair<State, State>, std::function<void(mysocket_t, context_t*)>> fxn_map = {
@@ -187,8 +190,14 @@ std::map<std::pair<State, State>, std::function<void(mysocket_t, context_t*)>> f
 
         //fxn associated with the establishment. 
     // idfk how to do this bit Will or Pascal yall are gonna have to handle this
-    {{ACTIVE_PRECLOSE, FORK_CLOSE}, maid_active},
-    {{PASSIVE_PRECLOSE, CLOSE_WAIT}, maid_passive}, // both of these terminate
+    {{ACTIVE_PRECLOSE, FIN_WAIT_1}, maid_active},
+    // FIN_WAIT_1 => FIN_WAIT_2 / CLOSING is handled outside the map
+    {{FIN_WAIT_2, DONE}, wait_fin}, // terminal
+    {{CLOSING, DONE}, wait_ackfin}, // terminal
+
+    {{PASSIVE_PRECLOSE, CLOSE_WAIT}, maid_passive}, 
+    {{CLOSE_WAIT, LAST_ACK}, wait_ackfin} // terminal
+
 };
 
 /* initialise the transport layer, and start the main loop, handling
@@ -313,31 +322,9 @@ State get_next_state(context_t *ctx, int event) {
                 // this *shouldn't* change state here, it should change state in response to
                 // seeing a FIN packet. so i don't think we do anything here.
             }
-        /* all of these are horseshit because
-        case FIN_WAIT_1:
-            switch(event){
-                case NETWORK_DATA: return FIN_WAIT_2;
-                // maybe? maybe not? i think we're meant to switch state in response to getting an ACK for our *FIN packet specifically*, but also...
-                default: return FIN_WAIT_1;
-            }
-        case FIN_WAIT_2:
-            switch(event){
-                case NETWORK_DATA: return CLOSED; // should be okay because it'll only loop if not done, and we can set done to true.
-                default: return FIN_WAIT_2;
-            }
-        case CLOSE_WAIT:
-            switch(event){
-                case NETWORK_DATA: return LAST_CALL;
-                default: return CLOSE_WAIT;
-            }
-        case LAST_CALL:
-            switch(event){
-                // idfk this is probably wrong
-                default: return CLOSED;
-            }
+            
         default:
             return ERROR;
-            */
     }
 }
 
@@ -527,8 +514,10 @@ static void control_loop(mysocket_t sd, context_t *ctx)
             exit(1);
         } 
 
+        
         //execute the event; 
-        fxn_map[{ctx->state, next_state}](sd, ctx);
+        if next_state != (FIN_WAIT_1) fxn_map[{ctx->state, next_state}](sd, ctx);
+        else close_fork(sd, ctx)
 
         //advance the state
         ctx->state = next_state;
@@ -551,10 +540,24 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 }
 
 static bool finsniffer(tcphdr* t) {
-    return t->th_flags & TH_FIN;
+    return (t->th_flags & TH_FIN) == TH_FIN;
 }
 
-static void maid_active()
+static void maid_active(mysocket_t sd, context_t *ctx) {
+    // send loop
+
+    // send fin packet
+}
+static void maid_passive(mysocket_t sd, context_t *ctx) {
+    // send EOF
+    stcp_fin_received(sd);
+    // 
+
+}
+
+static void close_fork(mysocket_t sd, context_t *ctx) {}
+static void wait_fin(mysocket_t sd, context_t *ctx) {}
+static void wait_ackfin(mysocket_t sd, context_t *ctx {}
 
 /**********************************************************************/
 /* our_dprintf
