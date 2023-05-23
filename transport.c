@@ -322,7 +322,6 @@ State get_next_state(context_t *ctx, int event) {
                 // this *shouldn't* change state here, it should change state in response to
                 // seeing a FIN packet. so i don't think we do anything here.
             }
-            
         default:
             return ERROR;
     }
@@ -516,8 +515,7 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 
         
         //execute the event; 
-        if next_state != (FIN_WAIT_1) fxn_map[{ctx->state, next_state}](sd, ctx);
-        else close_fork(sd, ctx)
+        fxn_map[{ctx->state, next_state}](sd, ctx);
 
         //advance the state
         ctx->state = next_state;
@@ -544,15 +542,14 @@ static bool finsniffer(tcphdr* t) {
 }
 
 static void maid_active(mysocket_t sd, context_t *ctx) {
-    // send loop
-
-    // send fin packet
+    // sends a fin packet. we're not waiting for it to close because that's fin_wait_1's problem
+    send_just_header(sd, ctx, TH_FIN);
 }
 static void maid_passive(mysocket_t sd, context_t *ctx) {
     // send EOF
     stcp_fin_received(sd);
-    // 
-
+    //
+    
 }
 
 static void close_fork(mysocket_t sd, context_t *ctx) {}
