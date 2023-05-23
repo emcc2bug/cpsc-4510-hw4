@@ -10,4 +10,4 @@ We rely heavily on our states for aforementioned reasons - we wanted to just imp
 
 We use a very basic sliding window buffer because we didn't think something beyond that was necessary. if we still have data in the buffer *after* we fill our window up, we can just call wait_for_event (and therefore stcp_app_recv) again, and load up more data into our buffer. if our window's full, obviously there are bigger problems than our window code being the way it is.
 
-Additionally, you have to modify the makefile to set it to C++ 11 or it won't compile. 
+Additionally, you have to modify the makefile's CFLAGS with `-std=c++11` or the code won't compile.
