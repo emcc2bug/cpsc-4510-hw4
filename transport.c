@@ -115,20 +115,10 @@ typedef enum State {
     PASSIVE_ESTABLISHED, 
     ACTIVE_ESTABLISHED,
 
-    // map will never route to these! you have to edit ctx directly!
-    PASSIVE_PRECLOSE,
-    ACTIVE_PRECLOSE,
-
-    // active side
     FIN_WAIT_1,
     FIN_WAIT_2,
-    CLOSING,
-
-    // passive side
     CLOSE_WAIT,
-    LAST_ACK,
-
-    DONE,
+    LAST_CALL,
 
     ERROR,
 
@@ -176,12 +166,6 @@ static State execute_state(context_t *ctx, int event);
 static void generate_initial_seq_num(context_t *ctx, bool_t is_active);
 static void control_loop(mysocket_t sd, context_t *ctx);
 
-static void maid_active(mysocket_t sd, context_t *ctx);
-static void maid_passive(mysocket_t sd, context_t *ctx);
-
-static void close_fork(mysocket_t sd, context_t *ctx);
-static void wait_fin(mysocket_t sd, context_t *ctx);
-static void wait_ackfin(mysocket_t sd, context_t *ctx);
 
 // this is probably broken, but it needs to be defined in the global scope
 std::map<std::pair<State, State>, std::function<void(mysocket_t, context_t*)>> fxn_map = {
@@ -194,14 +178,6 @@ std::map<std::pair<State, State>, std::function<void(mysocket_t, context_t*)>> f
 
         //fxn associated with the establishment. 
     // idfk how to do this bit Will or Pascal yall are gonna have to handle this
-    {{ACTIVE_PRECLOSE, FIN_WAIT_1}, maid_active},
-    // FIN_WAIT_1 => FIN_WAIT_2 / CLOSING is handled outside the map
-    {{FIN_WAIT_2, DONE}, wait_fin}, // terminal
-    {{CLOSING, DONE}, wait_ackfin}, // terminal
-
-    {{PASSIVE_PRECLOSE, CLOSE_WAIT}, maid_passive}, 
-    {{CLOSE_WAIT, LAST_ACK}, wait_ackfin} // terminal
-
 };
 
 /* initialise the transport layer, and start the main loop, handling
@@ -262,6 +238,13 @@ void transport_init(mysocket_t sd, bool_t is_active)
         stcp_unblock_application(sd);
         control_loop(sd, ctx);
     }
+    else { // maybe idk
+
+        //can't return from a void silly goose
+
+        // if (is_active) return ECONNREFUSED;
+        // else return ECONNABORTED;
+    }
 
     /* do any cleanup here */
     free(ctx);
@@ -307,15 +290,14 @@ State get_next_state(context_t *ctx, int event) {
                 default: return PASSIVE_ESTABLISHED;
             }
 
-        // this is probably not good but this is how i *think* we're meant to do it
+        // this shit is probably not good but this is how i *think* we're meant to do it
         case ACTIVE_ESTABLISHED:
             switch(event){
-                case APP_CLOSE_REQUESTED: return ACTIVE_PRECLOSE;
+                case APP_CLOSE_REQUESTED: return FIN_WAIT_1;
                 default: return ACTIVE_ESTABLISHED;
             }
         case PASSIVE_ESTABLISHED:
             switch(event){
-                case APP_CLOSE_REQUESTED: return ACTIVE_PRECLOSE;
                 default: return PASSIVE_ESTABLISHED;
             }        
         case ACTIVE_PRECLOSE:
@@ -326,15 +308,20 @@ State get_next_state(context_t *ctx, int event) {
             // irrelevant
             return FIN_WAIT_1;
         case FIN_WAIT_2:
-            return DONE;
-        case CLOSING:
-            return DONE;
+            switch(event){
+                case NETWORK_DATA: return CLOSED; // should be okay because it'll only loop if not done, and we can set done to true.
+                default: return FIN_WAIT_2;
+            }
         case CLOSE_WAIT:
-            return LAST_ACK;
-        case LAST_ACK:
-            return DONE;
-        case DONE:
-            return DONE;
+            switch(event){
+                case NETWORK_DATA: return LAST_CALL;
+                default: return CLOSE_WAIT;
+            }
+        case LAST_CALL:
+            switch(event){
+                // idfk this is probably wrong
+                default: return CLOSED;
+            }
         default:
             return ERROR;
     }
@@ -478,26 +465,21 @@ static void recv_sumthin_from_network(mysocket_t sd, context_t *ctx){
     //reads the data into the header
     memcpy(recv_header,recv_buffer, amt_head); //copy the packet head into the struct which analyzes it
 
-    #if ESTABLISHED_PRINT
-    std::cout << "      OPPOSITE CURRENT SEQ NUMBER: " << recv_header->th_seq << std::endl;
-    //prints everything but the end of line character
-    std::cout << "      DATA: " << std::string(&recv_buffer[amt_head]).substr(0, amt_data - 2) << std::endl;
-    std::cout << "      AMT: " << amt_data << std::endl;
-    #endif
-
-    ctx->fin_ack = 0;
     //analyze struct
     if(recv_header->th_flags&TH_ACK) { 
 
         #if ESTABLISHED_PRINT
         std::cout << "      RECV ACK" << std::endl;
+        std::cout << "      ACK#:" << recv_header->th_ack << std::endl;
         #endif
 
-        ctx->fin_ack = 2;
+        //TODO: not sure if this works
         //then record how much data has been received by the other
         slideWindow(&ctx->current_buffer,recv_header->th_ack-ctx->current_sequence_num);
         //and record it in the sequence num
-        ctx->current_sequence_num=recv_header->th_ack;
+        
+        //no the seq_number are adjusted when stuff is sent. 
+        // ctx->current_sequence_num=recv_header->th_ack;
 
     } else if(recv_header->th_flags&TH_FIN) { 
         
@@ -505,30 +487,32 @@ static void recv_sumthin_from_network(mysocket_t sd, context_t *ctx){
         std::cout << "      RECV FIN" << std::endl;
         #endif
         
-        ctx->fin_ack = 1;
-        stcp_fin_received(sd);
-        ctx->state = PASSIVE_PRECLOSE;
-    } 
+        // ctx->state=PASSIVE_PRECLOSE; /////////////////////////////////////////////////////// change for fsm, evelyn
+    } else { //otherwise access the data part of the packet
+        
+        #if ESTABLISHED_PRINT
+        std::cout << "      RECV DATA" << std::endl;
+        std::cout << "      RECV SEQ NUMBER (MATCH OPP): " << recv_header->th_seq << std::endl;
+        //prints everything but the end of line character
+        std::cout << "      DATA: " << std::string(&recv_buffer[amt_head]).substr(0, amt_data - 2) << std::endl;
+        std::cout << "      AMT: " << amt_data << std::endl;
+        #endif
+        
+        //TODO: PASCAL FIGURE THIS OUT
+        insertWindow(&ctx->opposite_buffer,recv_buffer); //record that data was given to us
+        
+        //increments the opposite sequence number for the ack
+        ctx->opposite_current_sequence_num += amt_data; //record the sequence number
+        
+        //send an ack
+        send_just_header(sd,ctx,TH_ACK); 
 
-    #if ESTABLISHED_PRINT
-    std::cout << "      RECV DATA" << std::endl;
-    #endif
+        //send the data to client
+        stcp_app_send(sd, &recv_buffer[amt_head], amt_data); 
 
-    //TODO: PASCAL FIGURE THIS OUT
-    insertWindow(&ctx->opposite_buffer,recv_buffer); //record that data was given to us
-
-    //increments the opposite sequence number for the ack
-    ctx->opposite_current_sequence_num += amt_data; //record the sequence number
-
-    //send an ack
-    send_just_header(sd,ctx,TH_ACK); 
-
-    //send the data to client
-    stcp_app_send(sd, &recv_buffer[amt_head], amt_data); 
-
-    //TODO: PASCAL FIGURE THIS OUT
-    slideWindow(&ctx->opposite_buffer,num_read); //record that data was sent up
-    
+        //TODO: PASCAL FIGURE THIS OUT
+        slideWindow(&ctx->opposite_buffer,num_read); //record that data was sent up
+    }
     delete recv_header;
 }
 
@@ -547,7 +531,7 @@ static void recv_sumthin_from_app(mysocket_t sd, context_t *ctx){
 
     #if ESTABLISHED_PRINT
     //print but no end line or carriage returns
-    std::cout << "RECV: " << std::string(recv_buffer, num_read).substr(0, num_read) << std::endl;
+    std::cout << "      RECV: " << std::string(recv_buffer, num_read).substr(0, num_read) << std::endl;
     #endif
     
     #if ESTABLISHED_PRINT
@@ -584,39 +568,45 @@ static void control_loop(mysocket_t sd, context_t *ctx)
     assert(!ctx->done);
 
     unsigned int event; 
-  
-    #if ESTABLISHED_PRINT
-    std::cout << "HANDSHAKE COMPLETE!" << std::endl;
-    std::cout << "SEQ NUM: " << ctx->current_sequence_num << std::endl;
-    std::cout << "OPP SEQ NUM: " << ctx->opposite_current_sequence_num << std::endl;
-    #endif
 
+    
 
-    // ESTABLISHED state
-    while (ctx->state == PASSIVE_ESTABLISHED || ctx->state == ACTIVE_ESTABLISHED)
+    while (!ctx->done)
     {
+
+        #if ESTABLISHED_PRINT
+        // std::cout << "HANDSHAKE COMPLETE!" << std::endl;
+        std::cout << "SEQ NUM: " << ctx->current_sequence_num << std::endl;
+        std::cout << "OPP SEQ NUM: " << ctx->opposite_current_sequence_num << std::endl;
+        std::cout.flush();
+        #endif
 
         event = stcp_wait_for_event(sd, ANY_EVENT, NULL);
 
         if(event & APP_DATA){
             recv_sumthin_from_app(sd, ctx);
-            exit(1);
         } else if (event & NETWORK_DATA){
             recv_sumthin_from_network(sd, ctx);
-        } else if (event & APP_CLOSE_REQUESTED) {
-            ctx->state = ACTIVE_PRECLOSE;
         }
-    }
-    while (!ctx->done) {
-        event = stcp_wait_for_event(sd, ANY_EVENT, NULL);
-        State next_state = get_next_state(ctx, event);
-        
-        //execute the event; 
-        fxn_map[{ctx->state, next_state}](sd, ctx);
 
-        //advance the state
-        // if statement is b/c FIN_WAIT_1's function will set its own state based on the next packet it receives :)
-        if (ctx->state != FIN_WAIT_2 && ctx->state != CLOSING && ctx->state != PASSIVE_PRECLOSE) ctx->state = next_state;
+        // } else (event & APP_CLOSE_REQUESTED){
+        //     //evelyn's job
+        // }
+
+        // unsigned int event;
+
+        // /* see stcp_api.h or stcp_api.c for details of this function */
+        // /* XXX: you will need to change some of these arguments! */
+        // event = stcp_wait_for_event(sd, 0, NULL);
+
+        // /* check whether it was the network, app, or a close request */
+        // if (event & APP_DATA)
+        // {
+        //     /* the application has requested that data be sent */
+        //     /* see stcp_app_recv() */
+        // }
+
+        // /* etc. */
     }
 }
 
