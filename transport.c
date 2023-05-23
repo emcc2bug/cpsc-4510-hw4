@@ -348,7 +348,7 @@ static void send_just_header(mysocket_t sd, context_t *ctx, uint8_t current_flag
 
     //if ACK you send the next bit of data you expect to recv
     if(current_flags & TH_ACK){
-        send_header->th_ack=ctx->opposite_current_sequence_num+1;
+        send_header->th_ack = ctx->opposite_current_sequence_num + 1;
         
         #if HANDSHAKE_PRINT
         std::cout << "      INIT ACK#: " << send_header->th_ack << std::endl;
@@ -473,6 +473,10 @@ static void recv_sumthin_from_network(mysocket_t sd, context_t *ctx){
     int num_read = stcp_network_recv(sd, recv_buffer, sizeof(recv_buffer)); //receive from network the entire packet
     memcpy(recv_header,recv_buffer,(size_t)TCP_DATA_START(recv_buffer)); //copy the packet head into the struct which analyzes it
 
+    #if ESTABLISHED_PRINT
+    std::cout << "  OPPOSITE CURRENT SEQ NUMBER: " << recv_header->th_seq << std::endl;
+    #endif
+
     //analyze struct
     if(recv_header->th_flags&TH_ACK){ //if it is an ack
 
@@ -482,7 +486,7 @@ static void recv_sumthin_from_network(mysocket_t sd, context_t *ctx){
 
         slideWindow(&ctx->current_buffer,recv_header->th_ack-ctx->current_sequence_num); //then record how much data has been received by the other
         ctx->current_sequence_num=recv_header->th_ack; //and record it in the sequence num
-    } else if((recv_header->th_flags&TH_FIN)==TH_FIN) { //otherwise if it receives an unsolicited fin
+    } else if(recv_header->th_flags&TH_FIN) { //otherwise if it receives an unsolicited fin
         
         #if ESTABLISHED_PRINT
         std::cout << "RECV FIN" << std::endl;
@@ -492,7 +496,7 @@ static void recv_sumthin_from_network(mysocket_t sd, context_t *ctx){
     } else { //otherwise access the data part of the packet
         
         #if ESTABLISHED_PRINT
-        std::cout << "RECV DATA" << std::endl;
+        std::cout << "  RECV DATA" << std::endl;
         #endif
         
         insertWindow(&ctx->opposite_buffer,recv_buffer); //record that data was given to us
@@ -517,20 +521,21 @@ static void recv_sumthin_from_app(mysocket_t sd, context_t *ctx){
     recv_buffer[num_read] = '\0';
 
     #if ESTABLISHED_PRINT
-    std::cout << "      RECV: " << recv_buffer << std::endl;
+    std::cout << "      RECV: " << recv_buffer << "(" << num_read << ")"<< std::endl;
     #endif
 
-    //null terminate
-    recv_buffer[num_read] = '\0';
-
     //memcpy for the ring buffer
-    insertWindow(&ctx->current_buffer,recv_buffer);
+    // insertWindow(&ctx->current_buffer,recv_buffer);
 
     //create the header
     STCPHeader* send_header = new STCPHeader();
     memset(send_header, 0, sizeof(STCPHeader));
 
     //NEED TO CHECK THE RECV HAS ENOUGH ROOM IN BUFFER
+    #if ESTABLISHED_PRINT
+    std::cout << "      CURRENT SEQ NUM:" << ctx->current_sequence_num << std::endl;
+    #endif
+
 
     //seq num is first byte in packet
     send_header->th_seq=ctx->current_sequence_num;
@@ -543,7 +548,7 @@ static void recv_sumthin_from_app(mysocket_t sd, context_t *ctx){
 
 
     //advances our seq number
-    ctx->current_sequence_num=ctx->current_sequence_num+num_read;
+    ctx->current_sequence_num += ctx->current_sequence_num+num_read;
 }
 
 
