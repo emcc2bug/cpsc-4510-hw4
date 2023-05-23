@@ -310,15 +310,13 @@ State get_next_state(context_t *ctx, int event) {
         // this is probably not good but this is how i *think* we're meant to do it
         case ACTIVE_ESTABLISHED:
             switch(event){
-                case APP_CLOSE_REQUESTED: return FIN_WAIT_1;
+                case APP_CLOSE_REQUESTED: return ACTIVE_PRECLOSE;
                 default: return ACTIVE_ESTABLISHED;
             }
         case PASSIVE_ESTABLISHED:
             switch(event){
                 case APP_CLOSE_REQUESTED: return ACTIVE_PRECLOSE;
                 default: return PASSIVE_ESTABLISHED;
-                // this *shouldn't* change state here, it should change state in response to
-                // seeing a FIN packet. so i don't think we do anything here.
             }        
         case ACTIVE_PRECLOSE:
             return FIN_WAIT_1;
