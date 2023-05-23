@@ -318,49 +318,75 @@ State get_next_state(context_t *ctx, int event) {
     }
 }
 
-static void send_syn(mysocket_t sd, context_t *ctx){
+static void send_just_header(mysocket_t sd, context_t *ctx, uint8_t current_flags){
+    STCPHeader* send_header = new STCPHeader();
+    memset(send_header, 0, sizeof(*send_header));
+    send_header->th_seq=ctx->current_sequence_num;
+    send_header->th_win=getSize(&ctx->current_buffer);
+    send_header->th_flags=current_flags;
+    delete send_header;
+    stcp_network_send(sd,send_header,sizeof(*send_header));
+}
 
-#if HANDSHAKE_PRINT
+static void recv_just_header(mysocket_t sd, context_t *ctx, uint8_t current_flags){
+    STCPHeader* recv_header = new STCPHeader();
+    memset(recv_header, 0, sizeof(*recv_header));
+    stcp_network_recv(sd, recv_header, sizeof(*recv_header));
+    if((recv_header->th_flags & current_flags) != current_flags){
+        // error handling?
+        ctx->state = ERROR;
+        return;
+    }
+    ctx->tcp_opposite_window_size = recv_header->th_win; 
+    ctx->opposite_current_sequence_num = recv_header->th_seq;
+
+}
+
+static void send_syn(mysocket_t sd, context_t *ctx){
+    #if HANDSHAKE_PRINT
     std::cout << "SEND SYN" << std::endl;
-#endif
-    
+    #endif
+
+    generate_initial_seq_num(ctx);
+    send_just_header(sd,ctx,TH_SYN);
+
+    /*
     STCPHeader* send_header = new STCPHeader();
 
-    memset(send_header, 0, sizeof(STCPHeader));
+    memset(send_header, 0, sizeof(*send_header));
 
     generate_initial_seq_num(ctx);
 
     send_header->th_seq = ctx->initial_sequence_num;
     send_header->th_win = MAXBUF;
-    send_header->th_off = 5; //must be 5
     send_header->th_flags |= TH_SYN;
 
-    stcp_network_send(sd, (void*)send_header, sizeof(STCPHeader), NULL);
+    stcp_network_send(sd, send_header, sizeof(*send_header));
 
     ctx->initial_sequence_num = send_header->th_seq;
     ctx->current_sequence_num = send_header->th_seq;
 
     delete send_header;
+    */
 
 }
 
 static void recv_syn_send_synack(mysocket_t sd, context_t *ctx){
-
-#if HANDSHAKE_PRINT
+    #if HANDSHAKE_PRINT
     std::cout << "RECV SYN SEND SYNACK" << std::endl;
-#endif
+    #endif
+    generate_initial_seq_num(ctx);
+    recv_just_header(sd,ctx,TH_SYN);
+    send_just_header(sd,ctx,TH_SYN|TH_ACK);
 
+    /*
     STCPHeader* recv_header = new STCPHeader();
     STCPHeader* send_header = new STCPHeader();
 
-    memset(recv_header, 0, sizeof(STCPHeader));
-    memset(send_header, 0, sizeof(STCPHeader));
+    memset(recv_header, 0, sizeof(*recv_header));
+    memset(send_header, 0, sizeof(*send_header));
 
-    stcp_network_recv(sd, recv_header, sizeof(STCPHeader));
-
-#if HANDSHAKE_PRINT
-    std::cout << "RECVED SYN " << std::endl;
-#endif
+    stcp_app_recv(sd, recv_header, sizeof(*recv_header));
 
     ctx->tcp_opposite_window_size = recv_header->th_win; 
     ctx->tcp_window_size = MAXBUF;
@@ -374,32 +400,30 @@ static void recv_syn_send_synack(mysocket_t sd, context_t *ctx){
 
     send_header->th_seq = ctx->initial_sequence_num;
     send_header->th_ack = ctx->initial_sequence_num;
-    send_header->th_off = 5; //magic number
 
     send_header->th_win = MAXBUF;
     send_header->th_flags |= TH_SYN;
     send_header->th_flags |= TH_ACK;
 
-    stcp_network_send(sd, send_header, sizeof(STCPHeader), NULL);
-    
-#if HANDSHAKE_PRINT
-    std::cout << "SENT SYNACK" << std::endl;
-#endif
+    stcp_network_send(sd, send_header, sizeof(*send_header));
+    */
 }
 
 static void recv_synack_send_ack(mysocket_t sd, context_t *ctx){
-    
-#if HANDSHAKE_PRINT
+    #if HANDSHAKE_PRINT
     std::cout << "RECV SYNACK SEND ACK" << std::endl;
-#endif
-
+    #endif
+    recv_just_header(sd,ctx,TH_SYN|TH_SYN);
+    send_just_header(sd,ctx,TH_ACK);
+    
+    /*
     STCPHeader* recv_header = new STCPHeader();
     STCPHeader* send_header = new STCPHeader();
 
-    memset(recv_header, 0, sizeof(STCPHeader));
-    memset(send_header, 0, sizeof(STCPHeader));
+    memset(recv_header, 0, sizeof(*recv_header));
+    memset(send_header, 0, sizeof(*send_header));
 
-    stcp_network_recv(sd, recv_header, sizeof(STCPHeader));
+    stcp_app_recv(sd, recv_header, sizeof(*recv_header));
 
     ctx->tcp_opposite_window_size = recv_header->th_win; 
     ctx->tcp_window_size = MAXBUF;
@@ -410,18 +434,18 @@ static void recv_synack_send_ack(mysocket_t sd, context_t *ctx){
         ctx->state = ERROR;
         perror("error in synack");
     }
+    */
 }
 static void recv_ack(mysocket_t sd, context_t *ctx){
-
-#if HANDSHAKE_PRINT
+    #if HANDSHAKE_PRINT
     std::cout << "RECV ACK" << std::endl;
-#endif
+    #endif
 
     STCPHeader* recv_header = new STCPHeader();
 
-    memset(recv_header, 0, sizeof(STCPHeader));
+    memset(recv_header, 0, sizeof(*recv_header));
 
-    stcp_app_recv(sd, recv_header, sizeof(STCPHeader));
+    stcp_app_recv(sd, recv_header, sizeof(*recv_header));
 
     ctx->tcp_opposite_window_size = recv_header->th_win; 
     ctx->tcp_window_size = MAXBUF;
