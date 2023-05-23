@@ -534,7 +534,7 @@ static void recv_sumthin_from_app(mysocket_t sd, context_t *ctx){
     
     //receive the data from the app
     //size_t num_read = stcp_app_recv(sd, (void*)recv_buffer, STCP_MSS);
-    size_t num_read = stcp_app_recv(sd, (void*)recv_buffer, MIN(MIN(STCP_MSS-1,MAXBUF-getSize(&ctx->current_buffer)),ctx->tcp_opposite_window_size));
+    size_t num_read = stcp_app_recv(sd, (void*)recv_buffer, MIN(STCP_MSS-1,MAXBUF-getSize(&ctx->current_buffer)));
 
     //put it in the buffer to be tracked
     insertWindow(&ctx->current_buffer,recv_buffer); 
