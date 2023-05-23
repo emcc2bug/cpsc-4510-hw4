@@ -143,6 +143,8 @@ typedef struct
     /* any other connection-wide global variables go here */
     int tcp_opposite_window_size; 
     int tcp_window_size;
+
+    cBuffer current_buffer;
 } context_t;
 
 
@@ -319,27 +321,39 @@ State get_next_state(context_t *ctx, int event) {
 }
 
 static void send_just_header(mysocket_t sd, context_t *ctx, uint8_t current_flags){
+    
     STCPHeader* send_header = new STCPHeader();
-    memset(send_header, 0, sizeof(*send_header));
+
+    memset(send_header, 0, sizeof(STCPHeader));
+
     send_header->th_seq=ctx->current_sequence_num;
     send_header->th_win=getSize(&ctx->current_buffer);
     send_header->th_flags=current_flags;
+    send_header->th_off = 5; 
+
+    stcp_network_send(sd,send_header,sizeof(STCPHeader), NULL);
+
     delete send_header;
-    stcp_network_send(sd,send_header,sizeof(*send_header));
 }
 
 static void recv_just_header(mysocket_t sd, context_t *ctx, uint8_t current_flags){
+    
     STCPHeader* recv_header = new STCPHeader();
-    memset(recv_header, 0, sizeof(*recv_header));
-    stcp_network_recv(sd, recv_header, sizeof(*recv_header));
+    
+    memset(recv_header, 0, sizeof(STCPHeader));
+    
+    stcp_network_recv(sd, recv_header, sizeof(STCPHeader));
+    
     if((recv_header->th_flags & current_flags) != current_flags){
         // error handling?
         ctx->state = ERROR;
         return;
     }
+    
     ctx->tcp_opposite_window_size = recv_header->th_win; 
     ctx->opposite_current_sequence_num = recv_header->th_seq;
 
+    delete recv_header;
 }
 
 static void send_syn(mysocket_t sd, context_t *ctx){
