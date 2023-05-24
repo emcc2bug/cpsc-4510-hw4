@@ -29,9 +29,10 @@
 #include <iostream>
 
 #define MAXBUF 3072
-#define HANDSHAKE_PRINT 1
+#define HANDSHAKE_PRINT 0
 #define HANDSHAKE_LOOP_PRINT 0
 #define ESTABLISHED_PRINT 1
+#define FIN_PRINT 1
 
 
 
@@ -118,10 +119,12 @@ typedef enum State {
     PASSIVE_ESTABLISHED, 
     ACTIVE_ESTABLISHED,
 
+    FORK_CLOSE,
+
     FIN_WAIT_1,
     FIN_WAIT_2,
     CLOSE_WAIT,
-    LAST_CALL,
+    LAST_ACK,
 
     CLOSING,
     
@@ -171,6 +174,13 @@ static State execute_state(context_t *ctx, int event);
 static void generate_initial_seq_num(context_t *ctx, bool_t is_active);
 static void control_loop(mysocket_t sd, context_t *ctx);
 
+static void maid_active(mysocket_t sd, context_t *ctx);
+static void maid_passive(mysocket_t sd, context_t *ctx);
+
+static void close_fork(mysocket_t sd, context_t *ctx);
+static void wait_ackfin(mysocket_t sd, context_t *ctx);
+static void wait_fin(mysocket_t sd, context_t *ctx);
+
 
 // this is probably broken, but it needs to be defined in the global scope
 std::map<std::pair<State, State>, std::function<void(mysocket_t, context_t*)>> fxn_map = {
@@ -181,8 +191,12 @@ std::map<std::pair<State, State>, std::function<void(mysocket_t, context_t*)>> f
     {{CONNECT, ACTIVE_ESTABLISHED}, recv_synack_send_ack}, //
     {{ACCEPT, PASSIVE_ESTABLISHED}, recv_ack}, 
 
-        //fxn associated with the establishment. 
-    // idfk how to do this bit Will or Pascal yall are gonna have to handle this
+    // establish code handled by regular control loop
+
+    // finish code:
+    // im just gonna have both of these go all the way, i think. easier that way.
+    {{ACTIVE_PRECLOSE, FORK_CLOSE}, maid_active}, 
+    {{PASSIVE_PRECLOSE, CLOSE_WAIT}, maid_passive},
 };
 
 /* initialise the transport layer, and start the main loop, handling
@@ -243,13 +257,6 @@ void transport_init(mysocket_t sd, bool_t is_active)
         stcp_unblock_application(sd);
         control_loop(sd, ctx);
     }
-    else { // maybe idk
-
-        //can't return from a void silly goose
-
-        // if (is_active) return ECONNREFUSED;
-        // else return ECONNABORTED;
-    }
 
     /* do any cleanup here */
     free(ctx);
@@ -306,7 +313,7 @@ State get_next_state(context_t *ctx, int event) {
                 default: return PASSIVE_ESTABLISHED;
             }        
         case ACTIVE_PRECLOSE:
-            return FIN_WAIT_1;
+            return FORK_CLOSE;
         case PASSIVE_PRECLOSE:
             return CLOSE_WAIT;
         case FIN_WAIT_1:
@@ -319,10 +326,10 @@ State get_next_state(context_t *ctx, int event) {
             }
         case CLOSE_WAIT:
             switch(event){
-                case NETWORK_DATA: return LAST_CALL;
+                case NETWORK_DATA: return LAST_ACK;
                 default: return CLOSE_WAIT;
             }
-        case LAST_CALL:
+        case LAST_ACK:
             switch(event){
                 // idfk this is probably wrong
                 default: return CLOSED;
@@ -469,10 +476,10 @@ static void recv_sumthin_from_network(mysocket_t sd, context_t *ctx){
 
     //reads the data into the header
     memcpy(recv_header,recv_buffer, amt_head); //copy the packet head into the struct which analyzes it
-    ctx->fin_ack = 2;
+    ctx->fin_ack = 0;
     //analyze struct
     if(recv_header->th_flags&TH_ACK) { 
-        ctx->fin_ack = 1;
+        ctx->fin_ack = 2;
         #if ESTABLISHED_PRINT
         std::cout << "      RECV ACK" << std::endl;
         std::cout << "      ACK#:" << recv_header->th_ack << std::endl;
@@ -486,13 +493,16 @@ static void recv_sumthin_from_network(mysocket_t sd, context_t *ctx){
         //no the seq_number are adjusted when stuff is sent. 
         // ctx->current_sequence_num=recv_header->th_ack;
 
-    } 
-    if(recv_header->th_flags&TH_FIN) { 
+    } else if(recv_header->th_flags&TH_FIN) { 
         ctx->fin_ack = 1;
         #if ESTABLISHED_PRINT
         std::cout << "      RECV FIN" << std::endl;
         #endif
-        ctx->state = PASSIVE_PRECLOSE;
+        if (ctx-> state == PASSIVE_ESTABLISHED || ctx->state == ACTIVE_ESTABLISHED)
+            ctx->state = PASSIVE_PRECLOSE;
+        ctx->opposite_current_sequence_num += 1;
+        send_just_header(sd,ctx,TH_ACK); 
+
     } if (amt_data > 0) { //otherwise access the data part of the packet if it exists
         
         #if ESTABLISHED_PRINT
@@ -603,50 +613,87 @@ static void control_loop(mysocket_t sd, context_t *ctx)
         }
     }
     while (!ctx->done) {
-        event = stcp_wait_for_event(sd, ANY_EVENT, NULL);
-        State next_state = get_next_state(ctx, event);
-        
-        //execute the event; 
-        fxn_map[{ctx->state, next_state}](sd, ctx);
+        #if FIN_PRINT
+            std::cout << "ENTERING CLOSE LOOP" << std::endl;
+        #endif
+        State next_state = get_next_state(ctx, 0);
 
-        //advance the state
-        // if statement is b/c FIN_WAIT_1's function will set its own state based on the next packet it receives :)
-        if (ctx->state != FIN_WAIT_2 && ctx->state != CLOSING && ctx->state != PASSIVE_PRECLOSE) ctx->state = next_state;
+        fxn_map[{ctx->state, next_state}](sd, ctx);
+        #if FIN_PRINT
+            std::cout << "SHUTTING DOWN... " << std::endl;
+        #endif
     }
 }
 
 static void maid_active(mysocket_t sd, context_t *ctx) {
     // sends a fin packet. we're not waiting for it to close because that's fin_wait_1's problem
     send_just_header(sd, ctx, TH_FIN);
+    #if FIN_PRINT
+        std::cout << "SENT FIN FROM ACTIVE" << std::endl;
+    #endif
+    close_fork(sd, ctx);
+
 }
 static void maid_passive(mysocket_t sd, context_t *ctx) {
-    // send EOF
+    // we've already signalled application to expect EOF & ack'd it, now we send FIN & wait for last ack
     send_just_header(sd, ctx, TH_FIN);
+    #if FIN_PRINT
+        std::cout << "SENT FIN FROM PASSIVE" << std::endl;
+    #endif
+    wait_ackfin(sd, ctx);
 }
 
 static void close_fork(mysocket_t sd, context_t *ctx) {
+    stcp_wait_for_event(sd, NETWORK_DATA, NULL);
+    // this must be either an ACK or a FIN and anything else is a sign that Something Has Gone Terribly Wrong
     recv_sumthin_from_network(sd, ctx);
-    // fin has been received before ack of fin, enter CLOSING
+    // fin has been received before ack of fin, wait for last ack then bail
     if (ctx->fin_ack == 1) { 
-        ctx->state = CLOSING;
+        #if FIN_PRINT
+            std::cout << "GOT FIN, WAITING ACK" << std::endl;
+        #endif
         stcp_fin_received(sd);
+        wait_ackfin(sd, ctx);
     } 
     // ack received, enter FIN_WAIT_2
-    else 
+    else {
+        #if FIN_PRINT
+            std::cout << "GOT ACK, WAITING FIN" << std::endl;
+        #endif
+        wait_fin(sd, ctx);
         ctx->state = FIN_WAIT_2;
+    }
 }
 static void wait_fin(mysocket_t sd, context_t *ctx) {
+    // wait for fin, ACK handled by function call, then set done = true and bail
+    unsigned int x = stcp_wait_for_event(sd, ANY_EVENT, NULL);
+    #if FIN_PRINT
+        std::cout << "EVENT TYPE: " << x << std::endl;
+    #endif
     recv_sumthin_from_network(sd, ctx);
     if (ctx->fin_ack != 1) { // something has terribly gone wrong
         perror("????? error in FIN_WAIT_2 section");
     } else {
         stcp_fin_received(sd);
     }
+    #if FIN_PRINT
+        std::cout << "ALL DONE!" << std::endl;
+    #endif
     ctx->done = true;
 }
 
 static void wait_ackfin(mysocket_t sd, context_t *ctx) {
+    stcp_wait_for_event(sd, 2, NULL);
+    #if FIN_PRINT
+        std::cout << "DOOR STUCK" << std::endl;
+    #endif
     recv_sumthin_from_network(sd, ctx);
+
+    #if FIN_PRINT
+        if (ctx->fin_ack != 2) 
+            std::cout<< "OH NO " << ctx->fin_ack << std::endl;
+        std::cout << "ALL DONE!" << std::endl;
+    #endif
     ctx->done = true;
 }
 
