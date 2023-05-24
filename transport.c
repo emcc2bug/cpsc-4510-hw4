@@ -31,8 +31,8 @@
 #define MAXBUF 3072
 #define HANDSHAKE_PRINT 0
 #define HANDSHAKE_LOOP_PRINT 0
-#define ESTABLISHED_PRINT 1
-#define FIN_PRINT 1
+#define ESTABLISHED_PRINT 0
+#define FIN_PRINT 0
 
 
 
